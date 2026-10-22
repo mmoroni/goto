@@ -1,6 +1,8 @@
 using Goto.Cli;
 using Goto.Core;
+using Goto.Search;
 using Goto.Shell;
+using Goto.Store;
 using Goto.Ui;
 
 // Defensive: avoid legacy console-codepage mangling of stderr messages
@@ -36,6 +38,9 @@ static int Run(string[] args)
     if (parsed.Install)
         return RunInstall();
 
+    if (parsed.Doctor)
+        return RunDoctor();
+
     if (parsed.Positionals.Count == 0)
     {
         Console.Error.WriteLine("usage: gt <term> [term...] | gt --init powershell | gt --install");
@@ -58,7 +63,19 @@ static int Run(string[] args)
             Console.Error.WriteLine($"gt: too many matches ({result.Candidates!.Count}). Be more specific:");
             foreach (string candidate in result.Candidates)
                 Console.Error.WriteLine($"  {candidate}");
+
+            IReadOnlyList<string> suggestions = Suggestions.Suggest(result.Candidates, result.LeafTerm!);
+            if (suggestions.Count > 0)
+            {
+                Console.Error.WriteLine("  try:");
+                foreach (string s in suggestions)
+                    Console.Error.WriteLine($"    {s}");
+            }
             return ExitCode.AmbiguousOrCancelled;
+
+        case ResolveKind.BackendError:
+            Console.Error.WriteLine($"gt: {result.Path}");
+            return ExitCode.BackendOrConfigError;
 
         case ResolveKind.Listed:
             Console.Error.WriteLine($"gt: {result.Candidates!.Count} match(es):");
@@ -93,6 +110,56 @@ static int DispatchNeedsDecision(ParsedArgs parsed, ResolveResult result)
     Resolver.RecordChoice(result.Key!, chosen);
     RawOutput.WriteStdout(chosen);
     return ExitCode.Success;
+}
+
+static int RunDoctor()
+{
+    Config config = Config.Load();
+
+    Console.WriteLine("gt doctor:");
+
+    // A single TryConnect call drives both lines below -- calling it twice (once directly,
+    // once again inside BackendSelector.Select) risks launching Everything.exe a second time
+    // if its DB takes longer than ~2s to load (the first call's auto-start attempt may still
+    // be mid-flight when a second, independent attempt starts polling from zero).
+    var everything = new EverythingSearcher(config);
+    bool everythingOk = everything.TryConnect(out string? whyNot);
+    Console.WriteLine(everythingOk
+        ? "  Everything: reachable"
+        : $"  Everything: not reachable ({whyNot})");
+
+    string activeBackend = config.Backend switch
+    {
+        BackendMode.Walk => "walk",
+        BackendMode.Everything => everythingOk ? "everything" : "none (error: configured but unreachable)",
+        _ => everythingOk ? "everything" : "walk", // Auto
+    };
+    Console.WriteLine($"  active backend: {activeBackend} (configured: {config.Backend.ToString().ToLowerInvariant()})");
+
+    string dataDir = DataPaths.ResolveDataDir();
+    bool writable = TryProbeWrite(dataDir, out string? writeError);
+    Console.WriteLine(writable
+        ? $"  data dir: {dataDir} (writable)"
+        : $"  data dir: {dataDir} (NOT writable: {writeError})");
+
+    return ExitCode.Success;
+}
+
+static bool TryProbeWrite(string dir, out string? error)
+{
+    string probe = Path.Combine(dir, $".doctor-probe-{Guid.NewGuid():N}.tmp");
+    try
+    {
+        File.WriteAllText(probe, "probe");
+        File.Delete(probe);
+        error = null;
+        return true;
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        error = ex.Message;
+        return false;
+    }
 }
 
 static int RunInit(string shell)

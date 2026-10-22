@@ -44,4 +44,19 @@ public class ArgParserTests
         Assert.True(parsed.List);
         Assert.True(parsed.NoUi);
     }
+
+    [Fact]
+    public void Parse_Doctor_SetsFlag()
+    {
+        var parsed = ArgParser.Parse(["--doctor"]);
+        Assert.True(parsed.Doctor);
+    }
+
+    [Fact]
+    public void Parse_DoctorWithPositionals_StillParses()
+    {
+        var parsed = ArgParser.Parse(["--doctor", "documents"]);
+        Assert.True(parsed.Doctor);
+        Assert.Equal(["documents"], parsed.Positionals);
+    }
 }

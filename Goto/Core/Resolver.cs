@@ -11,9 +11,15 @@ internal enum ResolveKind
     NeedsDecision,
     TooMany,
     Listed,
+    BackendError,
 }
 
-internal sealed record ResolveResult(ResolveKind Kind, string? Path, IReadOnlyList<string>? Candidates = null, string? Key = null);
+internal sealed record ResolveResult(
+    ResolveKind Kind,
+    string? Path,
+    IReadOnlyList<string>? Candidates = null,
+    string? Key = null,
+    string? LeafTerm = null);
 
 internal static class Resolver
 {
@@ -51,7 +57,19 @@ internal static class Resolver
 
         // Step 3: TIERS T1-T3, stop at first tier with >=1 verified match. Applies to
         // --list/--pick too: --list shows what a plain `goto <term>` would currently consider.
-        IFolderSearcher searcher = searcherOverride ?? new WalkSearcher(config);
+        IFolderSearcher searcher;
+        if (searcherOverride is not null)
+        {
+            searcher = searcherOverride;
+        }
+        else
+        {
+            BackendSelection selection = BackendSelector.Select(config);
+            if (selection.Searcher is null)
+                return new ResolveResult(ResolveKind.BackendError, selection.ErrorMessage);
+            searcher = selection.Searcher;
+        }
+
         using var cts = new CancellationTokenSource(config.WalkTimeoutMs);
 
         string[] verified = [];
@@ -116,7 +134,7 @@ internal static class Resolver
         }
 
         string[] capped = verified.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Take(20).ToArray();
-        return new ResolveResult(ResolveKind.TooMany, null, capped);
+        return new ResolveResult(ResolveKind.TooMany, null, capped, LeafTerm: query.Leaf);
     }
 
     /// <summary>

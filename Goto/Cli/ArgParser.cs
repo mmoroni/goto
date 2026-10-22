@@ -8,6 +8,7 @@ internal sealed class ParsedArgs
     public bool List { get; set; }
     public bool Pick { get; set; }
     public bool NoUi { get; set; }
+    public bool Doctor { get; set; }
 }
 
 internal sealed class ArgParseException : Exception
@@ -61,6 +62,12 @@ internal static class ArgParser
             if (!endOfOptions && a == "--no-ui")
             {
                 result.NoUi = true;
+                continue;
+            }
+
+            if (!endOfOptions && a == "--doctor")
+            {
+                result.Doctor = true;
                 continue;
             }
 

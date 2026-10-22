@@ -12,12 +12,16 @@ parent shell's working directory, hence the split.
 The full design spec (architecture, on-disk file formats, ranking algorithm, Everything-search
 integration, picker UI, full build order across 7 milestones) lives in `docs/specs/00-design-spec.md`,
 with one `docs/specs/milestone-0N-*.md` per build-order milestone — see `docs/specs/README.md` for
-the index and each milestone's status. **This repo currently implements Milestones 1-3** (skeleton;
-walker + resolver + decisions store; picker + "too many" handling). Do not add the Everything SDK
-integration, ranking/frecency, or alias/completion commands until asked — those belong to later
-milestones and would be half-finished implementations right now. When a milestone ships, update its
-status and add implementation notes in its spec file, following the pattern in
-`milestone-01-skeleton.md`/`milestone-02-walker-resolver-decisions.md`/`milestone-03-picker-and-too-many.md`.
+the index and each milestone's status. **This repo currently implements Milestones 1-4** (skeleton;
+walker + resolver + decisions store; picker + "too many" handling; Everything backend). Do not add
+ranking/frecency or alias/completion commands until asked — those belong to later milestones and
+would be half-finished implementations right now. When a milestone ships, update its status and add
+implementation notes in its spec file, following the pattern in `milestone-01-skeleton.md` through
+`milestone-04-everything-backend.md`.
+
+`Everything64.dll` (`Goto/Search/Native/Everything64.dll`) is redistributed under the voidtools SDK's
+MIT-style license — see `docs/third-party/Everything-SDK-LICENSE.txt`. It's embedded as a resource,
+not shipped alongside the exe.
 
 ## Build
 
@@ -82,7 +86,7 @@ by `| Invoke-Expression`, a different contract entirely. These are mutually excl
 | 0 | Success, path on stdout |
 | 1 | No match |
 | 2 | Too many matches, ambiguous (non-interactive dump), or picker cancelled (Esc/Ctrl+C) |
-| 3 | Backend or config error |
+| 3 | Backend or config error (incl. `backend = everything` configured but unreachable) |
 | 4 | Usage error |
 
 ## Layout
@@ -95,11 +99,19 @@ Goto/Core/PathShortcut.cs     single-term existing-path check (., .., ~, C:\x, r
 Goto/Core/GotoQuery.cs        term splitting (/ and \ within an arg) + leaf/qualifiers/decision key
 Goto/Core/Matcher.cs          tier leaf-match (T1-T3) + qualifier ancestor-match
 Goto/Core/Resolver.cs         full resolution pipeline: path shortcut, decision, tiers, upsert
-Goto/Search/IFolderSearcher.cs  backend interface (shared by WalkSearcher now, Everything in M4)
-Goto/Search/WalkSearcher.cs   fallback filesystem walker (the only backend until M4)
+Goto/Core/Suggestions.cs      "be more specific" ancestor-split suggestions for TooMany
+Goto/Search/IFolderSearcher.cs  backend interface (WalkSearcher and EverythingSearcher both implement)
+Goto/Search/WalkSearcher.cs   fallback filesystem walker
+Goto/Search/EverythingSearcher.cs   SDK-backed searcher (auto-starts/polls Everything.exe)
+Goto/Search/EverythingNative.cs     P/Invoke declarations, verified against the real Everything.h
+Goto/Search/EverythingQueryBuilder.cs  pure query-string builder (exact/prefix/contains + qualifiers)
+Goto/Search/NativeLibraryExtractor.cs  lazy embedded-DLL extraction + hash-checked re-extraction
+Goto/Search/BackendSelector.cs      auto/everything/walk selection, forced-mode hard-error path
+Goto/Search/EverythingFallbackHint.cs  rate-limited (30min) stderr hint on auto-fallback
+Goto/Search/Native/Everything64.dll  embedded resource (MIT-licensed, see docs/third-party/)
 Goto/Store/DataPaths.cs       GOTO_HOME / portable-mode / %LOCALAPPDATA% resolution
 Goto/Store/AtomicFile.cs      named-mutex + tmp-then-rename write primitive
-Goto/Store/Config.cs          config.txt parser (exclude / walk_roots / walk_timeout_ms / max_candidates)
+Goto/Store/Config.cs          config.txt parser (exclude / walk_roots / walk_timeout_ms / max_candidates / backend / everything_path)
 Goto/Store/DecisionStore.cs   decisions.tsv read/write + stale-entry cleanup
 Goto/Store/VisitStore.cs      visits.tsv increment-only (no reader -- that's Milestone 5)
 Goto/Shell/PowerShellInit.cs  --init powershell script text (verbatim — don't reword/retune)
@@ -112,6 +124,21 @@ Goto/Ui/Picker.cs             the only code that touches Console.ReadKey/real re
 `goto.slnx` (note: `.slnx`, not `.sln` — .NET 10's `dotnet new sln` default) references both
 `Goto/Goto.csproj` and `Goto.Tests/Goto.Tests.csproj`. `build.ps1` still publishes `Goto/Goto.csproj`
 directly, not the solution (publishing the test project via AOT would be meaningless).
+
+## Key design decisions (Milestone 4)
+
+- **Forced `backend = everything` but unreachable → hard error, exit 3**, not a silent walker
+  fallback (`auto` mode falls back silently; forcing `everything` and quietly substituting the
+  walker would be misleading about what's actually happening).
+- **`walk_roots` only scopes the walker** — `EverythingSearcher` ignores it entirely (it queries
+  Everything's whole index directly). Don't expect `backend = auto`/`everything` test scenarios to
+  respect a scoped `walk_roots`; only `backend = walk` does.
+- **`--doctor` calls `EverythingSearcher.TryConnect` exactly once** — calling it a second time (e.g.
+  via a separate `BackendSelector.Select` call) risks launching Everything.exe twice if its DB is
+  still loading when the second call starts its own independent poll. Found via manual testing, not
+  by inspection — don't reintroduce a second connect attempt in diagnostic/reporting code.
+- Full list of M4-specific decisions (SDK verification process, AOT resolver confirmation, etc.) is
+  in `docs/specs/milestone-04-everything-backend.md`.
 
 ## Key design decisions (Milestone 3)
 

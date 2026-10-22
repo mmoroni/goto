@@ -5,3 +5,5 @@ obj/
 publish/
 *.pdb
 .claude/
+/sdk-extracted/
+Everything-SDK.zip

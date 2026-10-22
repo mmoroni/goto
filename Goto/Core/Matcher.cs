@@ -45,7 +45,7 @@ internal static class Matcher
         _ => false, // Abbreviation (T4) is Milestone 6
     };
 
-    private static List<string> GetAncestorNames(string candidatePath)
+    internal static List<string> GetAncestorNames(string candidatePath)
     {
         var ancestors = new List<string>();
         string? parent = Path.GetDirectoryName(candidatePath);

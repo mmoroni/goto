@@ -1,5 +1,7 @@
 namespace Goto.Store;
 
+internal enum BackendMode { Auto, Everything, Walk }
+
 internal sealed class Config
 {
     private static readonly string[] DefaultExclude =
@@ -11,6 +13,8 @@ internal sealed class Config
     public IReadOnlyList<string> WalkRoots { get; internal init; } = [];
     public int WalkTimeoutMs { get; internal init; } = 3000;
     public int MaxCandidates { get; internal init; } = 15;
+    public BackendMode Backend { get; internal init; } = BackendMode.Auto;
+    public string? EverythingPath { get; internal init; }
 
     public static Config Load()
     {
@@ -22,6 +26,8 @@ internal sealed class Config
         var walkRoots = new List<string>();
         int timeoutMs = 3000;
         int maxCandidates = 15;
+        BackendMode backend = BackendMode.Auto;
+        string? everythingPath = null;
 
         foreach (string rawLine in File.ReadLines(path))
         {
@@ -52,8 +58,19 @@ internal sealed class Config
                     if (int.TryParse(value, out int mc) && mc > 0)
                         maxCandidates = mc;
                     break;
-                // Unknown/not-yet-implemented keys (backend, everything_path,
-                // dominance_margin, ...) intentionally ignored.
+                case "backend":
+                    backend = value.ToLowerInvariant() switch
+                    {
+                        "auto" => BackendMode.Auto,
+                        "everything" => BackendMode.Everything,
+                        "walk" => BackendMode.Walk,
+                        _ => BackendMode.Auto, // invalid value -- silently fall back to default
+                    };
+                    break;
+                case "everything_path":
+                    everythingPath = string.IsNullOrWhiteSpace(value) ? null : value;
+                    break;
+                // Unknown/not-yet-implemented keys (dominance_margin, ...) intentionally ignored.
             }
         }
 
@@ -63,6 +80,8 @@ internal sealed class Config
             WalkRoots = walkRoots,
             WalkTimeoutMs = timeoutMs,
             MaxCandidates = maxCandidates,
+            Backend = backend,
+            EverythingPath = everythingPath,
         };
     }
 

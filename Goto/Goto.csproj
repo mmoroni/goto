@@ -17,4 +17,8 @@
     <InternalsVisibleTo Include="Goto.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Search\Native\Everything64.dll" LogicalName="Everything64.dll" />
+  </ItemGroup>
+
 </Project>
