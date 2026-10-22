@@ -29,3 +29,4 @@ separately from the milestones since they're not part of spec §12's build order
 | Addendum | File | Status |
 |---|---|---|
 | 1 | [addendum-01-help-command.md](./addendum-01-help-command.md) | Implemented |
+| 2 | [addendum-02-stdout-discipline-bugfixes.md](./addendum-02-stdout-discipline-bugfixes.md) | Implemented |

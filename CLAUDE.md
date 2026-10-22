@@ -70,12 +70,26 @@ for why this isn't a product bug.
 
 **stdout carries ONLY the resolved destination path** during normal term resolution — nothing else,
 ever. All human-facing messages (errors, usage, hints) go to stderr. The PowerShell wrapper relies
-on this: it captures `$out = & $GOTO_EXE @args` and does `Set-Location -LiteralPath (@($out)[0])`.
+on this: it captures `$out = & $GOTO_EXE @args` and does `Set-Location -LiteralPath (@($out)[0])`
+whenever exit code is 0 **and** `$out` is non-empty.
 
-The only writer of stdout bytes anywhere in the program is `Shell/RawOutput.WriteStdout`, which
-uses `Console.OpenStandardOutput()` directly — never `Console.Out` / `Console.WriteLine`. This
-avoids Windows console-codepage mangling of non-ASCII paths. `Console.Out`/`Console.Error` are
-fine (and used) for stderr messages.
+**That last clause is the trap**: any command reachable via `gt`/`goto` (not just direct term
+resolution) that prints human-facing text to stdout and exits 0 will make the wrapper try to `cd`
+into that text. `RunDoctor`, `RunAliasesList`, and `RunHelp` all hit this bug in production before
+it was caught — see `docs/specs/addendum-02-stdout-discipline-bugfixes.md`. **Any new meta-command
+reachable via the wrapper must print to `Console.Error`, never `Console.WriteLine`/`Console.Out`,
+even though it isn't "resolving a term."** The only commands that may legitimately write to real
+stdout are: (a) a resolved path, via the `RawOutput.WriteStdout` chokepoint below; (b) `--init`'s
+script text, same chokepoint, consumed by `Invoke-Expression`, a different contract entirely; and
+(c) `--complete`, via plain `Console.WriteLine` — safe only because it's invoked directly by
+`Register-ArgumentCompleter`'s script block, never through the `goto`/`gt` wrapper function.
+
+`Shell/RawOutput.WriteStdout` uses `Console.OpenStandardOutput()` directly — never `Console.Out` /
+`Console.WriteLine` — specifically for resolved paths and `--init`'s script text, to avoid Windows
+console-codepage mangling of non-ASCII paths. This is a stricter requirement than "goes to stdout"
+in general; `--complete`'s plain `Console.WriteLine` bypasses it because visited-folder leaf names
+don't have the same mangling risk as full paths in the Everything/walker search paths, and it's
+simpler for the one case that genuinely needs ordinary line-buffered stdout.
 
 `--init` and `--install` are meta-commands, not resolutions — `--init powershell`'s script-text
 output legitimately goes to stdout too (via the same `RawOutput` chokepoint), since it's consumed

@@ -25,7 +25,7 @@ internal static class HelpText
                                     whichever are present on this machine.
           gt --init powershell       Print the integration script to stdout instead
                                     of installing it, for a one-off session:
-                                    gt --init powershell | Invoke-Expression
+                                    gt --init powershell | Out-String | Invoke-Expression
           --with-prompt-hook         (with --install or --init) also learn from a
                                     plain `cd`, not just `gt` -- adds a small
                                     per-prompt-redraw cost, so it's opt-in.

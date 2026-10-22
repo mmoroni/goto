@@ -242,22 +242,29 @@ static int RunUnalias(string name)
 
 static int RunAliasesList()
 {
+    // Error.WriteLine, not WriteLine: invoked through the `gt`/`goto` PowerShell wrapper function,
+    // not just the raw exe -- the wrapper does Set-Location on ANY non-empty stdout + exit 0, so
+    // human-facing text printed to stdout here would make `gt --aliases` try to cd into its own
+    // listing.
     var aliases = AliasStore.LoadAll();
     if (aliases.Count == 0)
     {
-        Console.WriteLine("gt: no aliases defined");
+        Console.Error.WriteLine("gt: no aliases defined");
         return ExitCode.Success;
     }
 
-    Console.WriteLine("gt: aliases:");
+    Console.Error.WriteLine("gt: aliases:");
     foreach (var (name, path) in aliases.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase))
-        Console.WriteLine($"  {name} -> {path}");
+        Console.Error.WriteLine($"  {name} -> {path}");
 
     return ExitCode.Success;
 }
 
 static int RunComplete(string word)
 {
+    // Console.WriteLine (stdout) is correct here, unlike RunDoctor/RunAliasesList/RunHelp above:
+    // this is invoked directly by Register-ArgumentCompleter's script block, never through the
+    // `gt`/`goto` wrapper function, so there's no Set-Location-on-stdout hazard to avoid.
     var visits = VisitStore.LoadAll();
 
     var candidates = visits
@@ -357,9 +364,12 @@ static int DispatchNeedsDecision(ParsedArgs parsed, ResolveResult result)
 
 static int RunDoctor()
 {
+    // Error.WriteLine throughout: invoked through the `gt`/`goto` PowerShell wrapper function,
+    // which does Set-Location on ANY non-empty stdout + exit 0 -- human-facing text on stdout
+    // here would make `gt --doctor` try to cd into its own report.
     Config config = Config.Load();
 
-    Console.WriteLine("gt doctor:");
+    Console.Error.WriteLine("gt doctor:");
 
     // A single TryConnect call drives both lines below -- calling it twice (once directly,
     // once again inside BackendSelector.Select) risks launching Everything.exe a second time
@@ -367,7 +377,7 @@ static int RunDoctor()
     // be mid-flight when a second, independent attempt starts polling from zero).
     var everything = new EverythingSearcher(config);
     bool everythingOk = everything.TryConnect(out string? whyNot);
-    Console.WriteLine(everythingOk
+    Console.Error.WriteLine(everythingOk
         ? "  Everything: reachable"
         : $"  Everything: not reachable ({whyNot})");
 
@@ -377,11 +387,11 @@ static int RunDoctor()
         BackendMode.Everything => everythingOk ? "everything" : "none (error: configured but unreachable)",
         _ => everythingOk ? "everything" : "walk", // Auto
     };
-    Console.WriteLine($"  active backend: {activeBackend} (configured: {config.Backend.ToString().ToLowerInvariant()})");
+    Console.Error.WriteLine($"  active backend: {activeBackend} (configured: {config.Backend.ToString().ToLowerInvariant()})");
 
     string dataDir = DataPaths.ResolveDataDir();
     bool writable = TryProbeWrite(dataDir, out string? writeError);
-    Console.WriteLine(writable
+    Console.Error.WriteLine(writable
         ? $"  data dir: {dataDir} (writable)"
         : $"  data dir: {dataDir} (NOT writable: {writeError})");
 
@@ -407,10 +417,10 @@ static bool TryProbeWrite(string dir, out string? error)
 
 static int RunHelp()
 {
-    // Explicit, successful request -- stdout, exit 0 (unlike the terse ShortUsage one-liner
-    // printed to stderr on a bare usage error). Human-facing, not consumed by any script, so
-    // Console.WriteLine is fine here -- no need for the RawOutput chokepoint.
-    Console.WriteLine(HelpText.Full);
+    // Error.WriteLine, not WriteLine/RawOutput: invoked through the `gt`/`goto` PowerShell wrapper
+    // function, which does Set-Location on ANY non-empty stdout + exit 0 -- printing the help text
+    // to stdout here would make `gt --help` try to cd into its own output.
+    Console.Error.WriteLine(HelpText.Full);
     return ExitCode.Success;
 }
 
