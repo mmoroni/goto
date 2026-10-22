@@ -13,4 +13,8 @@
     <RootNamespace>Goto</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Goto.Tests" />
+  </ItemGroup>
+
 </Project>

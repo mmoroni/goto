@@ -53,6 +53,12 @@ static int Run(string[] args)
             Console.Error.WriteLine($"gt: no match for '{string.Join(" ", parsed.Positionals)}'");
             return ExitCode.NoMatch;
 
+        case ResolveKind.TooMany:
+            Console.Error.WriteLine($"gt: too many matches ({result.Candidates!.Count}). Be more specific:");
+            foreach (string candidate in result.Candidates)
+                Console.Error.WriteLine($"  {candidate}");
+            return ExitCode.AmbiguousOrCancelled;
+
         default:
             Console.Error.WriteLine("gt: internal error");
             return ExitCode.BackendOrConfigError;

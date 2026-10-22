@@ -10,7 +10,7 @@
 | Milestone | File | Status |
 |---|---|---|
 | 1 | [milestone-01-skeleton.md](./milestone-01-skeleton.md) | Implemented |
-| 2 | [milestone-02-walker-resolver-decisions.md](./milestone-02-walker-resolver-decisions.md) | Not started |
+| 2 | [milestone-02-walker-resolver-decisions.md](./milestone-02-walker-resolver-decisions.md) | Implemented |
 | 3 | [milestone-03-picker-and-too-many.md](./milestone-03-picker-and-too-many.md) | Not started |
 | 4 | [milestone-04-everything-backend.md](./milestone-04-everything-backend.md) | Not started |
 | 5 | [milestone-05-ranking-frecency-explain.md](./milestone-05-ranking-frecency-explain.md) | Not started |

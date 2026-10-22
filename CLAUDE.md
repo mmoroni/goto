@@ -12,12 +12,12 @@ parent shell's working directory, hence the split.
 The full design spec (architecture, on-disk file formats, ranking algorithm, Everything-search
 integration, picker UI, full build order across 7 milestones) lives in `docs/specs/00-design-spec.md`,
 with one `docs/specs/milestone-0N-*.md` per build-order milestone — see `docs/specs/README.md` for
-the index and each milestone's status. **This repo currently implements only Milestone 1** (skeleton:
-args, exit codes, path shortcut, `--init`, `--install`). Do not add Store/Search/Ui code,
-decisions/visits TSV files, ranking, or the Everything SDK integration until asked — those belong to
+the index and each milestone's status. **This repo currently implements Milestones 1-2** (skeleton,
+and the walker + resolver + decisions store). Do not add the Everything SDK integration, the
+interactive picker, ranking/frecency, or alias/completion commands until asked — those belong to
 later milestones and would be half-finished implementations right now. When a milestone ships,
 update its status and add implementation notes in its spec file, following the pattern in
-`milestone-01-skeleton.md`.
+`milestone-01-skeleton.md`/`milestone-02-walker-resolver-decisions.md`.
 
 ## Build
 
@@ -38,6 +38,26 @@ you're already in a Developer Command Prompt / `VsDevCmd.bat`-initialized shell.
 
 This repo has its own `NuGet.Config` (scoped to this project, not the global user config) adding
 `nuget.org` as a source — the global user NuGet config on this machine has no sources configured.
+
+## Testing
+
+`Goto.Tests/` is an xUnit project (referenced via `goto.slnx`). Run with:
+
+```powershell
+dotnet test Goto.Tests/Goto.Tests.csproj
+```
+
+`dotnet test`/`dotnet build` don't invoke the Native AOT linker (that's `dotnet publish`-only), so
+this works from a plain shell without `build.ps1`'s MSVC environment. Tests disable collection
+parallelization assembly-wide (`Goto.Tests/AssemblyInfo.cs`) because they override the process-wide
+`GOTO_HOME` env var per test to isolate the data directory — don't remove that attribute without
+threading a data-dir parameter through the stores instead.
+
+**Test fixtures live under `%LOCALAPPDATA%\Temp`** (via `Directory.CreateTempSubdirectory()`), which
+the real default `exclude` config entry (`...;AppData\Local\Temp`) would otherwise prune during a
+walk. Tests that exercise `WalkSearcher`/`Resolver` against real temp trees must pass a `Config`
+with `Exclude = []` (or an explicit non-default list) — see `milestone-02-walker-resolver-decisions.md`
+for why this isn't a product bug.
 
 ## Golden rule: stdout discipline
 
@@ -61,7 +81,7 @@ by `| Invoke-Expression`, a different contract entirely. These are mutually excl
 |---|---|
 | 0 | Success, path on stdout |
 | 1 | No match |
-| 2 | Ambiguous/too many matches, or picker cancelled (not yet implemented — no picker in M1) |
+| 2 | Too many matches (M2: always this; a real picker/cancel path is Milestone 3) |
 | 3 | Backend or config error |
 | 4 | Usage error |
 
@@ -72,21 +92,44 @@ Goto/Program.cs              entry point, exit-code dispatch, --init/--install h
 Goto/Cli/ArgParser.cs         argv -> ParsedArgs (terms, --, --init, --install)
 Goto/Core/ExitCode.cs         exit code constants
 Goto/Core/PathShortcut.cs     single-term existing-path check (., .., ~, C:\x, relative dirs)
-Goto/Core/Resolver.cs         resolution pipeline (path shortcut only in M1)
+Goto/Core/GotoQuery.cs        term splitting (/ and \ within an arg) + leaf/qualifiers/decision key
+Goto/Core/Matcher.cs          tier leaf-match (T1-T3) + qualifier ancestor-match
+Goto/Core/Resolver.cs         full resolution pipeline: path shortcut, decision, tiers, upsert
+Goto/Search/IFolderSearcher.cs  backend interface (shared by WalkSearcher now, Everything in M4)
+Goto/Search/WalkSearcher.cs   fallback filesystem walker (the only backend until M4)
+Goto/Store/DataPaths.cs       GOTO_HOME / portable-mode / %LOCALAPPDATA% resolution
+Goto/Store/AtomicFile.cs      named-mutex + tmp-then-rename write primitive
+Goto/Store/Config.cs          config.txt parser (exclude / walk_roots / walk_timeout_ms only)
+Goto/Store/DecisionStore.cs   decisions.tsv read/write + stale-entry cleanup
+Goto/Store/VisitStore.cs      visits.tsv increment-only (no reader -- that's Milestone 5)
 Goto/Shell/PowerShellInit.cs  --init powershell script text (verbatim — don't reword/retune)
 Goto/Shell/RawOutput.cs       byte-exact stdout writer (the only stdout writer in the program)
 ```
 
-No `.sln` yet — single project, no tests until a later milestone adds `Goto.Tests/`.
+`goto.slnx` (note: `.slnx`, not `.sln` — .NET 10's `dotnet new sln` default) references both
+`Goto/Goto.csproj` and `Goto.Tests/Goto.Tests.csproj`. `build.ps1` still publishes `Goto/Goto.csproj`
+directly, not the solution (publishing the test project via AOT would be meaningless).
 
-## Key design decisions specific to this milestone
+## Key design decisions (Milestone 2)
+
+- **No alias lookup yet.** `aliases.tsv`'s format is pinned down but has no writer until Milestone 6
+  (`--alias`/`--unalias`) — an always-empty file checked on every resolve would be dead code.
+- **Ambiguous matches → exit 2 + stderr list, never a silent guess.** No picker exists yet (M3); see
+  `docs/specs/milestone-02-walker-resolver-decisions.md` for the full rationale.
+- **`Resolver.Resolve(args, searcherOverride?, configOverride?)`** takes optional DI seams
+  specifically for testability — don't remove them, and don't add more without a concrete test need.
+- Full list of M2-specific decisions (walker algorithm, exclude-list test gotcha, qualifier-matching
+  scope, timestamp format, etc.) is in `docs/specs/milestone-02-walker-resolver-decisions.md` — this
+  file only lists the ones that affect how you should modify the code going forward.
+
+## Key design decisions (Milestone 1)
 
 - **ArgParser only recognizes `--`, `--init <value>`, `--install`.** Any other `-x` flag is a hard
   usage error (exit 4), not silently mis-handled — future milestones (`-l`, `-p`, `--refresh`,
   `--explain`, etc.) add their own recognized flags when they're actually implemented.
-- **Positional args are collected raw, unsplit** (no splitting on `/`/`\` within a single arg).
-  Splitting only matters for future tiered-search qualifier/leaf matching — doing it now would
-  break the single-term path-shortcut check, since `C:\Windows` must be tested as one token.
+- **`ArgParser.Positionals` stays raw, unsplit** (no splitting on `/`/`\` within a single arg) —
+  `Resolver`'s step 0 path shortcut still needs `C:\Windows` as one token. Splitting on `/`/`\` into
+  search terms happens in `GotoQuery.FromPositionals` (Milestone 2), only reached once step 0 fails.
 - **Bare `-`** is not treated as a flag or special-cased in the exe at all. The PowerShell wrapper
   intercepts `gt -` before ever calling `goto.exe`; if the exe is invoked directly with a lone `-`,
   it just falls through as an ordinary (non-matching) positional term → exit 1.
