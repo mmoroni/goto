@@ -39,37 +39,36 @@ public class ConfigTests
     }
 
     [Fact]
-    public void Load_NoConfigFile_DefaultsBackendToAuto()
+    public void Load_NoConfigFile_DefaultsSearchTimeoutMsTo3000()
     {
         using var home = new TempGotoHome();
         var config = Config.Load();
-        Assert.Equal(BackendMode.Auto, config.Backend);
+        Assert.Equal(3000, config.SearchTimeoutMs);
+    }
+
+    [Fact]
+    public void Load_WithSearchTimeoutMsLine_ParsesIt()
+    {
+        using var home = new TempGotoHome();
+        File.WriteAllText(Path.Combine(home.Path, "config.txt"), "search_timeout_ms = 5000");
+
+        var config = Config.Load();
+
+        Assert.Equal(5000, config.SearchTimeoutMs);
     }
 
     [Theory]
-    [InlineData("backend = walk", "Walk")]
-    [InlineData("backend = everything", "Everything")]
-    [InlineData("backend = auto", "Auto")]
-    [InlineData("backend = WALK", "Walk")]
-    public void Load_BackendLine_ParsesItCaseInsensitively(string line, string expectedName)
+    [InlineData("search_timeout_ms = abc")]
+    [InlineData("search_timeout_ms = -1")]
+    [InlineData("search_timeout_ms = 0")]
+    public void Load_WithInvalidSearchTimeoutMsValue_KeepsDefault(string line)
     {
         using var home = new TempGotoHome();
         File.WriteAllText(Path.Combine(home.Path, "config.txt"), line);
 
         var config = Config.Load();
 
-        Assert.Equal(expectedName, config.Backend.ToString());
-    }
-
-    [Fact]
-    public void Load_InvalidBackendValue_KeepsAutoDefault()
-    {
-        using var home = new TempGotoHome();
-        File.WriteAllText(Path.Combine(home.Path, "config.txt"), "backend = nonsense");
-
-        var config = Config.Load();
-
-        Assert.Equal(BackendMode.Auto, config.Backend);
+        Assert.Equal(3000, config.SearchTimeoutMs);
     }
 
     [Fact]

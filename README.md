@@ -11,10 +11,12 @@ PS C:\Users\you\Documents>
 It learns from what you actually use: folders you jump to (or `cd` into, if you opt in) get
 remembered, so an ambiguous name resolves to the right place more confidently over time.
 
+Requires [Everything](https://www.voidtools.com/) (voidtools) installed and running — `gt` is a
+thin, fast client over its index, not its own filesystem scanner. `gt --doctor` checks reachability.
+
 ## Features
 
-- **Fast lookup** via the [Everything](https://www.voidtools.com/) search engine if it's installed
-  and running, with an automatic filesystem-walk fallback if it isn't.
+- **Fast lookup** via the Everything search engine's index — typically single-digit milliseconds.
 - **Frecency ranking** — recency + visit count + how close a candidate is to your current
   directory — so a clear winner resolves instantly; a real tie opens an interactive picker.
 - **Typos and abbreviations**: `gt dl` → `Downloads`, a mistyped name suggests the closest match.
@@ -25,13 +27,15 @@ remembered, so an ambiguous name resolves to the right place more confidently ov
 
 ## Install
 
-1. Get `goto.exe` — either grab a built release, or [build it yourself](#building-from-source).
-2. Run it once to wire it into your PowerShell profile(s):
+1. Install and run [Everything](https://www.voidtools.com/) (voidtools) — `gt` has no filesystem
+   scanner of its own and won't work without it.
+2. Get `goto.exe` — either grab a built release, or [build it yourself](#building-from-source).
+3. Run it once to wire it into your PowerShell profile(s):
    ```powershell
    .\goto.exe --install
    ```
    This installs into both Windows PowerShell 5.1's and `pwsh` 7's profile, whichever are present.
-3. Open a new terminal (or `. $PROFILE`) and you're set — `gt`/`goto` are now shell functions.
+4. Open a new terminal (or `. $PROFILE`) and you're set — `gt`/`goto` are now shell functions.
 
 Prefer not to touch your profile? `goto.exe --init powershell | Out-String | Invoke-Expression`
 loads it for the current session only.
@@ -48,7 +52,7 @@ gt -c, --code <term>      Open the result in VS Code instead of cd-ing
 gt --wrong                Last resolution was wrong -- exclude it and resolve again
 gt --history               Browse everywhere you've visited (also bound to Ctrl+G)
 gt --alias NAME PATH       Bookmark PATH as @NAME
-gt --doctor                Check search backend health and data directory
+gt --doctor                Check Everything reachability and the data directory
 ```
 
 Run `gt --help` for the full reference, including multi-term queries, aliases, and `--forget`.

@@ -93,7 +93,11 @@ everything else was already delivered incrementally by Milestones 1–6.
     practice.
   - Walker fallback timeout (`backend = walk`, guaranteed no-match, run from `C:\`): ~3116ms against
     a 3000ms `walk_timeout_ms` — within the expected small process-overhead slack, not a multiple
-    of the budget.
+    of the budget. **Superseded**: this measurement is moot now that the walker has been removed
+    entirely (see `docs/specs/addendum-04-remove-walker-fallback.md`) — kept here as the historical
+    record of why the budget was considered acceptable at the time; it ultimately didn't matter,
+    since the real complaint that triggered the removal wasn't the elapsed time but that it
+    couldn't be interrupted with Ctrl+C.
 
 ## Key files
 

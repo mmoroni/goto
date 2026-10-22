@@ -62,9 +62,10 @@ threading a data-dir parameter through the stores instead.
 
 **Test fixtures live under `%LOCALAPPDATA%\Temp`** (via `Directory.CreateTempSubdirectory()`), which
 the real default `exclude` config entry (`...;AppData\Local\Temp`) would otherwise prune during a
-walk. Tests that exercise `WalkSearcher`/`Resolver` against real temp trees must pass a `Config`
-with `Exclude = []` (or an explicit non-default list) — see `milestone-02-walker-resolver-decisions.md`
-for why this isn't a product bug.
+walk. Tests that exercise `Resolver` against real temp trees must pass a `Config` with
+`Exclude = []` (or an explicit non-default list) — see `milestone-02-walker-resolver-decisions.md`
+for why this isn't a product bug. (That config entry still applies to every backend's results, not
+just the now-removed walker — see `docs/specs/addendum-04-remove-walker-fallback.md`.)
 
 ## Golden rule: stdout discipline
 
@@ -88,7 +89,7 @@ script text, same chokepoint, consumed by `Invoke-Expression`, a different contr
 `Console.WriteLine` — specifically for resolved paths and `--init`'s script text, to avoid Windows
 console-codepage mangling of non-ASCII paths. This is a stricter requirement than "goes to stdout"
 in general; `--complete`'s plain `Console.WriteLine` bypasses it because visited-folder leaf names
-don't have the same mangling risk as full paths in the Everything/walker search paths, and it's
+don't have the same mangling risk as full paths in the Everything search path, and it's
 simpler for the one case that genuinely needs ordinary line-buffered stdout.
 
 `--init` and `--install` are meta-commands, not resolutions — `--init powershell`'s script-text
@@ -103,7 +104,7 @@ by `| Invoke-Expression`, a different contract entirely. These are mutually excl
 | 0 | Success, path on stdout |
 | 1 | No match |
 | 2 | Too many matches, ambiguous (non-interactive dump), or picker cancelled (Esc/Ctrl+C) |
-| 3 | Backend or config error (incl. `backend = everything` configured but unreachable) |
+| 3 | Backend or config error (incl. Everything unreachable — there's no filesystem-scan fallback) |
 | 4 | Usage error |
 
 ## Layout
@@ -121,19 +122,17 @@ Goto/Core/Ranker.cs           frecency + locality + project-root + depth scoring
 Goto/Core/EditDistance.cs     Levenshtein distance, for typo-tolerance "did you mean" suggestions
 Goto/Core/Resolver.cs         full pipeline: path shortcut, alias, decision, tiers, rank, upsert
 Goto/Core/Suggestions.cs      "be more specific" ancestor-split suggestions for TooMany
-Goto/Search/IFolderSearcher.cs  backend interface (WalkSearcher and EverythingSearcher both implement)
-Goto/Search/WalkSearcher.cs   fallback filesystem walker
+Goto/Search/IFolderSearcher.cs  backend interface (EverythingSearcher is the only implementation)
 Goto/Search/EverythingSearcher.cs   SDK-backed searcher (auto-starts/polls Everything.exe)
 Goto/Search/EverythingNative.cs     P/Invoke declarations, verified against the real Everything.h
 Goto/Search/EverythingQueryBuilder.cs  pure query-string builder (exact/prefix/contains + qualifiers)
 Goto/Search/NativeLibraryExtractor.cs  lazy embedded-DLL extraction + hash-checked re-extraction
-Goto/Search/BackendSelector.cs      auto/everything/walk selection, forced-mode hard-error path
-Goto/Search/EverythingFallbackHint.cs  rate-limited (30min) stderr hint on auto-fallback
+Goto/Search/BackendSelector.cs      thin wrapper: connect to Everything or return a hard error
 Goto/Search/Native/Everything64.dll  embedded resource (MIT-licensed, see docs/third-party/)
 Goto/Store/DataPaths.cs       GOTO_HOME / portable-mode / %LOCALAPPDATA% resolution
 Goto/Store/AtomicFile.cs      named-mutex + tmp-then-rename write primitive
 Goto/Store/PathCanon.cs       shared path canonicalization (Decision/Visit/Alias stores + Ranker)
-Goto/Store/Config.cs          config.txt parser (exclude / walk_roots / walk_timeout_ms / max_candidates / backend / everything_path / dominance_margin)
+Goto/Store/Config.cs          config.txt parser (exclude / search_timeout_ms / max_candidates / everything_path / dominance_margin)
 Goto/Store/DecisionStore.cs   decisions.tsv read/write + stale-entry cleanup
 Goto/Store/VisitStore.cs      visits.tsv read (LoadAll) + increment + aging (>10k total -> x0.9, drop <1)
 Goto/Store/AliasStore.cs      aliases.tsv read/write (name<TAB>path, case-insensitive name lookup)
@@ -153,6 +152,19 @@ Goto/Ui/Picker.cs             the only code that touches Console.ReadKey/real re
 `goto.slnx` (note: `.slnx`, not `.sln` — .NET 10's `dotnet new sln` default) references both
 `Goto/Goto.csproj` and `Goto.Tests/Goto.Tests.csproj`. `build.ps1` still publishes `Goto/Goto.csproj`
 directly, not the solution (publishing the test project via AOT would be meaningless).
+
+## Key design decisions (Post-milestone addenda)
+
+- **There is no filesystem-walk fallback.** `Everything` (voidtools) is a hard requirement; if it's
+  unreachable, resolution fails fast with exit 3 instead of degrading to a slow, uninterruptible
+  directory scan. `WalkSearcher`, `BackendMode`, `EverythingFallbackHint`, and the `backend`/
+  `walk_roots`/`walk_timeout_ms` config keys were all removed — see
+  `docs/specs/addendum-04-remove-walker-fallback.md`. If you're tempted to re-add a fallback search
+  path for when Everything is down, don't, without revisiting that addendum's reasoning first.
+- **Any new meta-command reachable via the `gt`/`goto` wrapper must print to `Console.Error`, never
+  `Console.WriteLine`** — see the golden rule section above and
+  `docs/specs/addendum-02-stdout-discipline-bugfixes.md`.
+- Full list of addenda (what each one changed and why) is indexed in `docs/specs/README.md`.
 
 ## Key design decisions (Milestone 7)
 
@@ -221,12 +233,12 @@ directly, not the solution (publishing the test project via AOT would be meaning
 
 ## Key design decisions (Milestone 4)
 
-- **Forced `backend = everything` but unreachable → hard error, exit 3**, not a silent walker
-  fallback (`auto` mode falls back silently; forcing `everything` and quietly substituting the
-  walker would be misleading about what's actually happening).
-- **`walk_roots` only scopes the walker** — `EverythingSearcher` ignores it entirely (it queries
-  Everything's whole index directly). Don't expect `backend = auto`/`everything` test scenarios to
-  respect a scoped `walk_roots`; only `backend = walk` does.
+- **Everything unreachable → hard error, exit 3.** There used to be an `auto` mode that silently
+  fell back to a filesystem-walking `WalkSearcher`; that fallback was removed entirely post-
+  Milestone-7 (unbearably slow on a large drive, and didn't respond to Ctrl+C mid-scan) — see
+  `docs/specs/addendum-04-remove-walker-fallback.md`. `BackendSelector`/`Config`/`backend`/
+  `walk_roots`/`walk_timeout_ms` as described below are historical; the current code has no
+  `BackendMode`, no `WalkSearcher`, and no walker-specific config keys at all.
 - **`--doctor` calls `EverythingSearcher.TryConnect` exactly once** — calling it a second time (e.g.
   via a separate `BackendSelector.Select` call) risks launching Everything.exe twice if its DB is
   still loading when the second call starts its own independent poll. Found via manual testing, not

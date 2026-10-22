@@ -1,6 +1,10 @@
 # Milestone 2: Walker + resolver + decisions
 
-**Status: Implemented.**
+**Status: Implemented.** **Partially superseded:** `WalkSearcher` and everything below describing
+it (§8/§8b coverage, the root/parallelism algorithm, `config.WalkRoots`/`config.WalkTimeoutMs`) was
+removed post-Milestone-7 — see `docs/specs/addendum-04-remove-walker-fallback.md`. This doc is kept
+as the historical record of what M2 actually built; the resolver/decisions-store material (§4, §6,
+§7 tiers, qualifier matching, `decisions.tsv`) is all still current.
 
 ## Scope (from design spec §12)
 

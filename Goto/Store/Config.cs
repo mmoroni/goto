@@ -2,8 +2,6 @@ using System.Globalization;
 
 namespace Goto.Store;
 
-internal enum BackendMode { Auto, Everything, Walk }
-
 internal sealed class Config
 {
     private static readonly string[] DefaultExclude =
@@ -12,10 +10,8 @@ internal sealed class Config
     ];
 
     public IReadOnlyList<string> Exclude { get; internal init; } = DefaultExclude;
-    public IReadOnlyList<string> WalkRoots { get; internal init; } = [];
-    public int WalkTimeoutMs { get; internal init; } = 3000;
+    public int SearchTimeoutMs { get; internal init; } = 3000;
     public int MaxCandidates { get; internal init; } = 15;
-    public BackendMode Backend { get; internal init; } = BackendMode.Auto;
     public string? EverythingPath { get; internal init; }
     public double DominanceMargin { get; internal init; } = 15.0;
 
@@ -26,10 +22,8 @@ internal sealed class Config
             return new Config();
 
         var exclude = new List<string>();
-        var walkRoots = new List<string>();
         int timeoutMs = 3000;
         int maxCandidates = 15;
-        BackendMode backend = BackendMode.Auto;
         string? everythingPath = null;
         double dominanceMargin = 15.0;
 
@@ -51,25 +45,13 @@ internal sealed class Config
                 case "exclude":
                     exclude.AddRange(SplitList(value));
                     break;
-                case "walk_roots":
-                    walkRoots.AddRange(SplitList(value));
-                    break;
-                case "walk_timeout_ms":
+                case "search_timeout_ms":
                     if (int.TryParse(value, out int ms) && ms > 0)
                         timeoutMs = ms;
                     break;
                 case "max_candidates":
                     if (int.TryParse(value, out int mc) && mc > 0)
                         maxCandidates = mc;
-                    break;
-                case "backend":
-                    backend = value.ToLowerInvariant() switch
-                    {
-                        "auto" => BackendMode.Auto,
-                        "everything" => BackendMode.Everything,
-                        "walk" => BackendMode.Walk,
-                        _ => BackendMode.Auto, // invalid value -- silently fall back to default
-                    };
                     break;
                 case "everything_path":
                     everythingPath = string.IsNullOrWhiteSpace(value) ? null : value;
@@ -84,10 +66,8 @@ internal sealed class Config
         return new Config
         {
             Exclude = exclude.Count > 0 ? exclude : DefaultExclude,
-            WalkRoots = walkRoots,
-            WalkTimeoutMs = timeoutMs,
+            SearchTimeoutMs = timeoutMs,
             MaxCandidates = maxCandidates,
-            Backend = backend,
             EverythingPath = everythingPath,
             DominanceMargin = dominanceMargin,
         };

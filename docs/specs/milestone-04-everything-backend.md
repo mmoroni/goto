@@ -1,6 +1,9 @@
 # Milestone 4: Everything backend
 
-**Status: Implemented.**
+**Status: Implemented.** **Partially superseded:** the auto-mode silent fallback to `WalkSearcher`
+and `BackendSelector`'s `BackendMode`/forced-mode branching described below were removed post-
+Milestone-7 — see `docs/specs/addendum-04-remove-walker-fallback.md`. Everything is now the only
+backend; `--doctor`'s single-`TryConnect`-call precedent documented here is still current.
 
 ## Scope (from design spec §12)
 

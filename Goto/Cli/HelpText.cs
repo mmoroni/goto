@@ -49,13 +49,15 @@ internal static class HelpText
           gt --forget <term...>     Forget the remembered decision for <term>.
 
         DIAGNOSTICS
-          gt --doctor                Check Everything reachability, which search
-                                    backend is active, and the data directory.
+          gt --doctor                Check Everything reachability and the data
+                                    directory. gt requires Everything (voidtools.com)
+                                    to be installed and running -- there's no
+                                    filesystem-scan fallback if it isn't.
           gt --explain <term>        Show why <term> resolved the way it did
                                     (source + ranked candidate score breakdown).
 
         Exit codes: 0 success, 1 no match, 2 ambiguous/cancelled, 3 backend/config
-        error, 4 usage error.
+        error (incl. Everything unreachable), 4 usage error.
 
         (--add and --complete are internal, used by the generated PowerShell
         integration scripts -- not meant to be typed by hand.)

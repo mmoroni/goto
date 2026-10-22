@@ -105,7 +105,7 @@ internal static class Resolver
             searcher = selection.Searcher;
         }
 
-        using var cts = new CancellationTokenSource(config.WalkTimeoutMs);
+        using var cts = new CancellationTokenSource(config.SearchTimeoutMs);
 
         string[] verified = [];
         MatchMode matchedTier = default;
@@ -127,9 +127,6 @@ internal static class Resolver
                 break;
             }
         }
-
-        if (searcher is WalkSearcher { LastSearchWasIncomplete: true })
-            Console.Error.WriteLine("gt: (search incomplete)");
 
         // Step 4: no tier matched at all. Typo tolerance: compare the leaf term against leaf
         // names already present in visits.tsv (no filesystem search needed).

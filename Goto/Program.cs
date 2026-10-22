@@ -371,23 +371,13 @@ static int RunDoctor()
 
     Console.Error.WriteLine("gt doctor:");
 
-    // A single TryConnect call drives both lines below -- calling it twice (once directly,
-    // once again inside BackendSelector.Select) risks launching Everything.exe a second time
-    // if its DB takes longer than ~2s to load (the first call's auto-start attempt may still
-    // be mid-flight when a second, independent attempt starts polling from zero).
+    // Everything is the only backend -- there's no fallback to report on, so reachability is the
+    // whole story (see docs/specs/addendum-04-remove-walker-fallback.md for why).
     var everything = new EverythingSearcher(config);
     bool everythingOk = everything.TryConnect(out string? whyNot);
     Console.Error.WriteLine(everythingOk
         ? "  Everything: reachable"
-        : $"  Everything: not reachable ({whyNot})");
-
-    string activeBackend = config.Backend switch
-    {
-        BackendMode.Walk => "walk",
-        BackendMode.Everything => everythingOk ? "everything" : "none (error: configured but unreachable)",
-        _ => everythingOk ? "everything" : "walk", // Auto
-    };
-    Console.Error.WriteLine($"  active backend: {activeBackend} (configured: {config.Backend.ToString().ToLowerInvariant()})");
+        : $"  Everything: NOT reachable ({whyNot}) -- gt will fail until Everything is running");
 
     string dataDir = DataPaths.ResolveDataDir();
     bool writable = TryProbeWrite(dataDir, out string? writeError);
