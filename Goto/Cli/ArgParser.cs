@@ -9,6 +9,9 @@ internal sealed class ParsedArgs
     public bool Pick { get; set; }
     public bool NoUi { get; set; }
     public bool Doctor { get; set; }
+    public bool Explain { get; set; }
+    public string? AddPath { get; set; }
+    public bool WithPromptHook { get; set; }
 }
 
 internal sealed class ArgParseException : Exception
@@ -68,6 +71,26 @@ internal static class ArgParser
             if (!endOfOptions && a == "--doctor")
             {
                 result.Doctor = true;
+                continue;
+            }
+
+            if (!endOfOptions && a == "--explain")
+            {
+                result.Explain = true;
+                continue;
+            }
+
+            if (!endOfOptions && a == "--with-prompt-hook")
+            {
+                result.WithPromptHook = true;
+                continue;
+            }
+
+            if (!endOfOptions && a == "--add")
+            {
+                if (i + 1 >= args.Length)
+                    throw new ArgParseException("gt: --add requires a path, e.g. 'gt --add C:\\some\\folder'");
+                result.AddPath = args[++i];
                 continue;
             }
 

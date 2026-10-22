@@ -93,4 +93,36 @@ public class ConfigTests
 
         Assert.Null(config.EverythingPath);
     }
+
+    [Fact]
+    public void Load_NoConfigFile_DefaultsDominanceMarginTo15()
+    {
+        using var home = new TempGotoHome();
+        var config = Config.Load();
+        Assert.Equal(15.0, config.DominanceMargin);
+    }
+
+    [Fact]
+    public void Load_WithDominanceMarginLine_ParsesIt()
+    {
+        using var home = new TempGotoHome();
+        File.WriteAllText(Path.Combine(home.Path, "config.txt"), "dominance_margin = 7.5");
+
+        var config = Config.Load();
+
+        Assert.Equal(7.5, config.DominanceMargin);
+    }
+
+    [Theory]
+    [InlineData("dominance_margin = abc")]
+    [InlineData("dominance_margin = -1")]
+    public void Load_WithInvalidDominanceMarginValue_KeepsDefault(string line)
+    {
+        using var home = new TempGotoHome();
+        File.WriteAllText(Path.Combine(home.Path, "config.txt"), line);
+
+        var config = Config.Load();
+
+        Assert.Equal(15.0, config.DominanceMargin);
+    }
 }

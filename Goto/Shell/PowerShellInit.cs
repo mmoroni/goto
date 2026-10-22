@@ -23,4 +23,23 @@ internal static class PowerShellInit
         }
         Set-Alias gt goto
         """;
+
+    // Optional (spec section 5, Phase 5): learn from plain `cd`, not just `goto`. Not part
+    // of the verbatim base script above -- opt-in via `--init powershell --with-prompt-hook`,
+    // since wrapping `prompt` shells out to goto.exe on every prompt redraw, a continuous
+    // latency cost users should consciously choose rather than inherit silently.
+    public const string PromptHookAddendum = """
+
+        $global:__gotoLastPwd = $PWD.Path
+        $global:__gotoOrigPrompt = $function:prompt
+        function prompt {
+            $__gotoCode = $LASTEXITCODE
+            if ($PWD.Path -ne $global:__gotoLastPwd) {
+                $global:__gotoLastPwd = $PWD.Path
+                & $global:GOTO_EXE --add $PWD.Path *> $null
+            }
+            $LASTEXITCODE = $__gotoCode
+            & $global:__gotoOrigPrompt
+        }
+        """;
 }

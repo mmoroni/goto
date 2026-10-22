@@ -13,7 +13,7 @@
 | 2 | [milestone-02-walker-resolver-decisions.md](./milestone-02-walker-resolver-decisions.md) | Implemented |
 | 3 | [milestone-03-picker-and-too-many.md](./milestone-03-picker-and-too-many.md) | Implemented |
 | 4 | [milestone-04-everything-backend.md](./milestone-04-everything-backend.md) | Implemented |
-| 5 | [milestone-05-ranking-frecency-explain.md](./milestone-05-ranking-frecency-explain.md) | Not started |
+| 5 | [milestone-05-ranking-frecency-explain.md](./milestone-05-ranking-frecency-explain.md) | Implemented |
 | 6 | [milestone-06-extras.md](./milestone-06-extras.md) | Not started |
 | 7 | [milestone-07-polish.md](./milestone-07-polish.md) | Not started |
 

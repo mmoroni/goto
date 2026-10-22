@@ -33,13 +33,16 @@ static int Run(string[] args)
     }
 
     if (parsed.InitShell is not null)
-        return RunInit(parsed.InitShell);
+        return RunInit(parsed.InitShell, parsed.WithPromptHook);
 
     if (parsed.Install)
-        return RunInstall();
+        return RunInstall(parsed.WithPromptHook);
 
     if (parsed.Doctor)
         return RunDoctor();
+
+    if (parsed.AddPath is not null)
+        return RunAdd(parsed.AddPath);
 
     if (parsed.Positionals.Count == 0)
     {
@@ -48,6 +51,9 @@ static int Run(string[] args)
     }
 
     var result = Resolver.Resolve(parsed);
+
+    if (parsed.Explain && result.Explain is not null)
+        PrintExplain(result.Explain);
 
     switch (result.Kind)
     {
@@ -90,6 +96,50 @@ static int Run(string[] args)
             Console.Error.WriteLine("gt: internal error");
             return ExitCode.BackendOrConfigError;
     }
+}
+
+static void PrintExplain(ExplainTrace trace)
+{
+    string sourceDesc = trace.Source switch
+    {
+        ExplainSource.PathShortcut => "path shortcut",
+        ExplainSource.Decision => "decision",
+        ExplainSource.Tier => $"tier ({trace.Tier.ToString()!.ToLowerInvariant()})",
+        _ => "unknown",
+    };
+    Console.Error.WriteLine($"gt: source: {sourceDesc}");
+
+    if (trace.Breakdown.Count == 0)
+        return;
+
+    Console.Error.WriteLine("gt: candidates (ranked):");
+    for (int i = 0; i < trace.Breakdown.Count; i++)
+    {
+        ScoreBreakdown b = trace.Breakdown[i];
+        Console.Error.WriteLine($"  {i + 1}. {b.Path}  (score {b.Total:F2})");
+        Console.Error.WriteLine(
+            $"       frecency {b.FrecencyTerm,7:+0.00;-0.00;+0.00}" +
+            $"  cwd {b.CwdBonus,6:+0.00;-0.00;+0.00}" +
+            $"  parent {b.ParentBonus,6:+0.00;-0.00;+0.00}" +
+            $"  profile {b.ProfileBonus,6:+0.00;-0.00;+0.00}" +
+            $"  project-root {b.ProjectRootBonus,6:+0.00;-0.00;+0.00}" +
+            $"  depth {b.DepthPenalty,7:+0.00;-0.00;+0.00}");
+    }
+}
+
+static int RunAdd(string path)
+{
+    try
+    {
+        VisitStore.Increment(path);
+    }
+    catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+    {
+        // Malformed input from a scripted caller (the prompt hook) must never surface an
+        // error on every prompt redraw -- matches VisitStore's existing lenient philosophy.
+    }
+
+    return ExitCode.Success; // prints nothing, always exit 0
 }
 
 static int DispatchNeedsDecision(ParsedArgs parsed, ResolveResult result)
@@ -162,7 +212,7 @@ static bool TryProbeWrite(string dir, out string? error)
     }
 }
 
-static int RunInit(string shell)
+static int RunInit(string shell, bool withPromptHook)
 {
     if (!string.Equals(shell, "powershell", StringComparison.OrdinalIgnoreCase))
     {
@@ -170,11 +220,14 @@ static int RunInit(string shell)
         return ExitCode.UsageError;
     }
 
-    RawOutput.WriteStdout(PowerShellInit.Script);
+    string script = withPromptHook
+        ? PowerShellInit.Script + PowerShellInit.PromptHookAddendum
+        : PowerShellInit.Script;
+    RawOutput.WriteStdout(script);
     return ExitCode.Success;
 }
 
-static int RunInstall()
+static int RunInstall(bool withPromptHook)
 {
     string exePath = Environment.ProcessPath
         ?? throw new InvalidOperationException("could not determine own executable path");
@@ -187,9 +240,10 @@ static int RunInstall()
     const string beginMarker = "# >>> goto >>>";
     const string endMarker = "# <<< goto <<<";
 
+    string initArgs = withPromptHook ? "--init powershell --with-prompt-hook" : "--init powershell";
     string block =
         $"{beginMarker}\n" +
-        $"(& '{exePath}' --init powershell) | Invoke-Expression\n" +
+        $"(& '{exePath}' {initArgs}) | Invoke-Expression\n" +
         $"{endMarker}\n";
 
     try

@@ -59,4 +59,31 @@ public class ArgParserTests
         Assert.True(parsed.Doctor);
         Assert.Equal(["documents"], parsed.Positionals);
     }
+
+    [Fact]
+    public void Parse_RecognizesExplainFlag()
+    {
+        var parsed = ArgParser.Parse(["--explain", "documents"]);
+        Assert.True(parsed.Explain);
+    }
+
+    [Fact]
+    public void Parse_RecognizesWithPromptHookFlag()
+    {
+        var parsed = ArgParser.Parse(["--init", "powershell", "--with-prompt-hook"]);
+        Assert.True(parsed.WithPromptHook);
+    }
+
+    [Fact]
+    public void Parse_AddRequiresPath_Throws()
+    {
+        Assert.Throws<ArgParseException>(() => ArgParser.Parse(["--add"]));
+    }
+
+    [Fact]
+    public void Parse_AddWithPath_SetsAddPath()
+    {
+        var parsed = ArgParser.Parse(["--add", @"C:\some\folder"]);
+        Assert.Equal(@"C:\some\folder", parsed.AddPath);
+    }
 }

@@ -12,12 +12,12 @@ parent shell's working directory, hence the split.
 The full design spec (architecture, on-disk file formats, ranking algorithm, Everything-search
 integration, picker UI, full build order across 7 milestones) lives in `docs/specs/00-design-spec.md`,
 with one `docs/specs/milestone-0N-*.md` per build-order milestone — see `docs/specs/README.md` for
-the index and each milestone's status. **This repo currently implements Milestones 1-4** (skeleton;
-walker + resolver + decisions store; picker + "too many" handling; Everything backend). Do not add
-ranking/frecency or alias/completion commands until asked — those belong to later milestones and
-would be half-finished implementations right now. When a milestone ships, update its status and add
-implementation notes in its spec file, following the pattern in `milestone-01-skeleton.md` through
-`milestone-04-everything-backend.md`.
+the index and each milestone's status. **This repo currently implements Milestones 1-5** (skeleton;
+walker + resolver + decisions store; picker + "too many" handling; Everything backend; ranking +
+frecency + `--explain` + prompt hook). Do not add alias/completion commands until asked — those
+belong to later milestones and would be half-finished implementations right now. When a milestone
+ships, update its status and add implementation notes in its spec file, following the pattern in
+`milestone-01-skeleton.md` through `milestone-05-ranking-frecency-explain.md`.
 
 `Everything64.dll` (`Goto/Search/Native/Everything64.dll`) is redistributed under the voidtools SDK's
 MIT-style license — see `docs/third-party/Everything-SDK-LICENSE.txt`. It's embedded as a resource,
@@ -98,7 +98,8 @@ Goto/Core/ExitCode.cs         exit code constants
 Goto/Core/PathShortcut.cs     single-term existing-path check (., .., ~, C:\x, relative dirs)
 Goto/Core/GotoQuery.cs        term splitting (/ and \ within an arg) + leaf/qualifiers/decision key
 Goto/Core/Matcher.cs          tier leaf-match (T1-T3) + qualifier ancestor-match
-Goto/Core/Resolver.cs         full resolution pipeline: path shortcut, decision, tiers, upsert
+Goto/Core/Ranker.cs           frecency + locality + project-root + depth scoring (pure, DI'd inputs)
+Goto/Core/Resolver.cs         full resolution pipeline: path shortcut, decision, tiers, rank, upsert
 Goto/Core/Suggestions.cs      "be more specific" ancestor-split suggestions for TooMany
 Goto/Search/IFolderSearcher.cs  backend interface (WalkSearcher and EverythingSearcher both implement)
 Goto/Search/WalkSearcher.cs   fallback filesystem walker
@@ -111,10 +112,12 @@ Goto/Search/EverythingFallbackHint.cs  rate-limited (30min) stderr hint on auto-
 Goto/Search/Native/Everything64.dll  embedded resource (MIT-licensed, see docs/third-party/)
 Goto/Store/DataPaths.cs       GOTO_HOME / portable-mode / %LOCALAPPDATA% resolution
 Goto/Store/AtomicFile.cs      named-mutex + tmp-then-rename write primitive
-Goto/Store/Config.cs          config.txt parser (exclude / walk_roots / walk_timeout_ms / max_candidates / backend / everything_path)
+Goto/Store/PathCanon.cs       shared path canonicalization (Decision/Visit stores + Ranker lookups)
+Goto/Store/Config.cs          config.txt parser (exclude / walk_roots / walk_timeout_ms / max_candidates / backend / everything_path / dominance_margin)
 Goto/Store/DecisionStore.cs   decisions.tsv read/write + stale-entry cleanup
-Goto/Store/VisitStore.cs      visits.tsv increment-only (no reader -- that's Milestone 5)
-Goto/Shell/PowerShellInit.cs  --init powershell script text (verbatim — don't reword/retune)
+Goto/Store/VisitStore.cs      visits.tsv read (LoadAll) + increment + aging (>10k total -> x0.9, drop <1)
+Goto/Shell/PowerShellInit.cs  --init powershell script text (verbatim base — don't reword/retune)
+                              + optional PromptHookAddendum (--with-prompt-hook, not verbatim-pinned)
 Goto/Shell/RawOutput.cs       byte-exact stdout writer (the only stdout writer in the program)
 Goto/Ui/Vt.cs                 VT escape processing scope for stderr (P/Invoke console mode)
 Goto/Ui/PickerState.cs        pure, console-free picker state machine (unit-testable)
@@ -124,6 +127,24 @@ Goto/Ui/Picker.cs             the only code that touches Console.ReadKey/real re
 `goto.slnx` (note: `.slnx`, not `.sln` — .NET 10's `dotnet new sln` default) references both
 `Goto/Goto.csproj` and `Goto.Tests/Goto.Tests.csproj`. `build.ps1` still publishes `Goto/Goto.csproj`
 directly, not the solution (publishing the test project via AOT would be meaningless).
+
+## Key design decisions (Milestone 5)
+
+- **`Ranker` is pure** — `cwd`/`userProfile`/`nowUtc` are parameters, never read from ambient state
+  inside `Ranker` itself; `Resolver` supplies the real values at the call site. Keep it this way for
+  testability.
+- **`--pick` and dominant-winner are separate branches in `Resolver.Resolve`**, not shared code —
+  `--pick` never auto-resolves on a score gap, only a literal single candidate. Don't refactor these
+  into one combined "maybe auto-resolve" path without preserving that distinction.
+- **Existence-check (top ~50) happens after ranking, before any count-based branch** (1-match /
+  dominant-winner / `NeedsDecision`) — a phantom top-ranked candidate must be dropped before deciding
+  ambiguity, not after. Getting this ordering wrong silently changes resolution outcomes.
+- **`--install`'s idempotency check doesn't detect hook-vs-no-hook drift** — re-running `--install
+  --with-prompt-hook` against an already-installed-without-hook profile silently no-ops instead of
+  upgrading. Known, documented gap (see `docs/specs/milestone-05-ranking-frecency-explain.md`), not a
+  regression to "fix" reflexively without considering the idempotency-check redesign it implies.
+- Full list of M5-specific decisions (ranking formula judgment calls, aging truncation behavior,
+  etc.) is in `docs/specs/milestone-05-ranking-frecency-explain.md`.
 
 ## Key design decisions (Milestone 4)
 

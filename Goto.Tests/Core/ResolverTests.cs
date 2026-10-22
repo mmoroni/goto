@@ -161,6 +161,158 @@ public class ResolverTests
     }
 
     [Fact]
+    public void Resolve_DominantWinner_AutoResolvesWithoutNeedsDecision()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        // Same leaf ("documents") under differently-named parents -- "zz-parent" is
+        // alphabetically last, proving ranking (not alphabetical order) drives the outcome.
+        string winner = tree.CreateDir(@"zz-parent\documents");
+        string loser = tree.CreateDir(@"aa-parent\documents");
+
+        for (int i = 0; i < 21; i++)
+            VisitStore.Increment(winner); // large visit count -> large frecency gap over the unvisited loser
+
+        var fake = new FakeFolderSearcher([winner, loser]);
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake, new Config { Exclude = [] });
+
+        Assert.Equal(ResolveKind.Success, result.Kind);
+        Assert.Equal(winner, result.Path, ignoreCase: true);
+
+        Assert.True(DecisionStore.TryGet("documents", out string decided));
+        Assert.Equal(winner, decided, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_MarginNotMet_StillReturnsNeedsDecision()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string first = tree.CreateDir(@"a-parent\documents");
+        string second = tree.CreateDir(@"b-parent\documents");
+
+        var fake = new FakeFolderSearcher([first, second]);
+        // No visits seeded for either -- any score gap is small (depth-only), well under the margin.
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake, new Config { Exclude = [] });
+
+        Assert.Equal(ResolveKind.NeedsDecision, result.Kind);
+    }
+
+    [Fact]
+    public void Resolve_NeedsDecision_CandidatesInRankedOrder_NotAlphabetical()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string alphabeticallyFirst = tree.CreateDir(@"aa-parent\documents");
+        string higherScoring = tree.CreateDir(@"zz-parent\documents");
+
+        // Visit the alphabetically-later folder enough to outrank the earlier one, but keep
+        // the gap below the dominance margin so this still returns NeedsDecision (not Success).
+        VisitStore.Increment(higherScoring);
+
+        var fake = new FakeFolderSearcher([alphabeticallyFirst, higherScoring]);
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake,
+            new Config { Exclude = [], DominanceMargin = 1000 }); // unreachable margin -> forces NeedsDecision
+
+        Assert.Equal(ResolveKind.NeedsDecision, result.Kind);
+        Assert.Equal(higherScoring, result.Candidates![0], ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_PhantomTopRankedCandidate_DroppedBeforeCountBranch()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        // Same leaf ("documents") under different parents, so Matcher's Exact tier accepts
+        // BOTH as candidates -- phantom must only be removed by the existence check, not
+        // simply never matched in the first place.
+        string real = tree.CreateDir(@"real-parent\documents");
+        string phantom = Path.Combine(tree.Root, "phantom-parent", "documents"); // never created on disk
+
+        // Heavily visit the phantom so it would rank #1 if existence weren't checked.
+        for (int i = 0; i < 20; i++)
+            VisitStore.Increment(phantom);
+
+        var fake = new FakeFolderSearcher([phantom, real]);
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake, new Config { Exclude = [] });
+
+        Assert.Equal(ResolveKind.Success, result.Kind);
+        Assert.Equal(real, result.Path, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_Pick_NeverAutoResolvesOnDominantScoreGap()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string heavilyVisited = tree.CreateDir(@"zz-parent\documents");
+        string unvisited = tree.CreateDir(@"aa-parent\documents");
+
+        for (int i = 0; i < 20; i++)
+            VisitStore.Increment(heavilyVisited);
+
+        var parsed = ArgParser.Parse(["--pick", "documents"]);
+        var fake = new FakeFolderSearcher([heavilyVisited, unvisited]);
+        var result = Resolver.Resolve(parsed, fake, new Config { Exclude = [] });
+
+        // Even though heavilyVisited would dominate under the normal path, --pick always
+        // forces a decision among 2+ candidates -- dominant-winner is a separate branch
+        // --pick deliberately bypasses.
+        Assert.Equal(ResolveKind.NeedsDecision, result.Kind);
+        Assert.Equal(2, result.Candidates!.Count);
+    }
+
+    [Fact]
+    public void Resolve_List_ReturnsRankedOrder()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string alphabeticallyFirst = tree.CreateDir(@"aa-parent\documents");
+        string higherScoring = tree.CreateDir(@"zz-parent\documents");
+
+        VisitStore.Increment(higherScoring);
+
+        var parsed = ArgParser.Parse(["--list", "documents"]);
+        var fake = new FakeFolderSearcher([alphabeticallyFirst, higherScoring]);
+        var result = Resolver.Resolve(parsed, fake, new Config { Exclude = [] });
+
+        Assert.Equal(ResolveKind.Listed, result.Kind);
+        Assert.Equal(higherScoring, result.Candidates![0], ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_Explain_PopulatesBreakdownForTierSearch()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("documents");
+
+        var fake = new FakeFolderSearcher([target]);
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake, new Config { Exclude = [] });
+
+        Assert.NotNull(result.Explain);
+        Assert.Equal(ExplainSource.Tier, result.Explain!.Source);
+        Assert.Single(result.Explain.Breakdown);
+        Assert.Equal(target, result.Explain.Breakdown[0].Path, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_Explain_DecisionHit_SourceIsDecisionWithEmptyBreakdown()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("documents");
+        DecisionStore.Upsert("documents", target);
+
+        var fake = new FakeFolderSearcher([]);
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake);
+
+        Assert.NotNull(result.Explain);
+        Assert.Equal(ExplainSource.Decision, result.Explain!.Source);
+        Assert.Empty(result.Explain.Breakdown);
+    }
+
+    [Fact]
     public void RecordChoice_UpsertsDecisionAndIncrementsVisit()
     {
         using var home = new TempGotoHome();

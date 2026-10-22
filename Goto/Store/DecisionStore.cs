@@ -20,7 +20,7 @@ internal static class DecisionStore
 
     public static void Upsert(string key, string path)
     {
-        string canonicalPath = Canonicalize(path);
+        string canonicalPath = PathCanon.Canonicalize(path);
         string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss'Z'");
 
         AtomicFile.WithLock(() =>
@@ -38,13 +38,6 @@ internal static class DecisionStore
             var rows = ReadRows().Where(r => !string.Equals(r.Key, key, StringComparison.Ordinal)).ToList();
             WriteRows(rows);
         });
-    }
-
-    private static string Canonicalize(string path)
-    {
-        string full = Path.GetFullPath(path);
-        bool isDriveRoot = full.Length == 3 && full[1] == ':' && full[2] == '\\';
-        return isDriveRoot ? full : full.TrimEnd('\\', '/');
     }
 
     private static IEnumerable<(string Key, string Path, string LastUsedUtc)> ReadRows()

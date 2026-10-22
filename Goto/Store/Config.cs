@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Goto.Store;
 
 internal enum BackendMode { Auto, Everything, Walk }
@@ -15,6 +17,7 @@ internal sealed class Config
     public int MaxCandidates { get; internal init; } = 15;
     public BackendMode Backend { get; internal init; } = BackendMode.Auto;
     public string? EverythingPath { get; internal init; }
+    public double DominanceMargin { get; internal init; } = 15.0;
 
     public static Config Load()
     {
@@ -28,6 +31,7 @@ internal sealed class Config
         int maxCandidates = 15;
         BackendMode backend = BackendMode.Auto;
         string? everythingPath = null;
+        double dominanceMargin = 15.0;
 
         foreach (string rawLine in File.ReadLines(path))
         {
@@ -70,7 +74,10 @@ internal sealed class Config
                 case "everything_path":
                     everythingPath = string.IsNullOrWhiteSpace(value) ? null : value;
                     break;
-                // Unknown/not-yet-implemented keys (dominance_margin, ...) intentionally ignored.
+                case "dominance_margin":
+                    if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double dm) && dm >= 0)
+                        dominanceMargin = dm;
+                    break;
             }
         }
 
@@ -82,6 +89,7 @@ internal sealed class Config
             MaxCandidates = maxCandidates,
             Backend = backend,
             EverythingPath = everythingPath,
+            DominanceMargin = dominanceMargin,
         };
     }
 
