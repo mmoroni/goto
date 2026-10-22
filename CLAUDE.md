@@ -12,12 +12,13 @@ parent shell's working directory, hence the split.
 The full design spec (architecture, on-disk file formats, ranking algorithm, Everything-search
 integration, picker UI, full build order across 7 milestones) lives in `docs/specs/00-design-spec.md`,
 with one `docs/specs/milestone-0N-*.md` per build-order milestone — see `docs/specs/README.md` for
-the index and each milestone's status. **This repo currently implements Milestones 1-6** (skeleton;
+the index and each milestone's status. **This repo fully implements Milestones 1-7** (skeleton;
 walker + resolver + decisions store; picker + "too many" handling; Everything backend; ranking +
-frecency + `--explain` + prompt hook; aliases + completion + typo/abbreviation tiers + `--wrong`).
-Only Milestone 7 (open-elsewhere, Ctrl+G hotkey, further `--install` polish) remains. When a
-milestone ships, update its status and add implementation notes in its spec file, following the
-pattern in `milestone-01-skeleton.md` through `milestone-06-extras.md`.
+frecency + `--explain` + prompt hook; aliases + completion + typo/abbreviation tiers + `--wrong`;
+open-elsewhere + Ctrl+G history hotkey + dual-profile `--install` + measured performance budget) —
+the full original design spec's 7-milestone build order is complete. When a milestone ships, update
+its status and add implementation notes in its spec file, following the pattern in
+`milestone-01-skeleton.md` through `milestone-07-polish.md`.
 
 `Everything64.dll` (`Goto/Search/Native/Everything64.dll`) is redistributed under the voidtools SDK's
 MIT-style license — see `docs/third-party/Everything-SDK-LICENSE.txt`. It's embedded as a resource,
@@ -93,7 +94,8 @@ by `| Invoke-Expression`, a different contract entirely. These are mutually excl
 
 ```
 Goto/Program.cs              entry point, exit-code dispatch, --init/--install handlers, picker dispatch
-Goto/Cli/ArgParser.cs         argv -> ParsedArgs (terms, --, --init, --install, --list, --pick, --no-ui)
+Goto/Cli/ArgParser.cs         argv -> ParsedArgs (terms, --, --init, --install, --list, --pick, --no-ui,
+                              -e/--explore, -c/--code, --history)
 Goto/Core/ExitCode.cs         exit code constants
 Goto/Core/PathShortcut.cs     single-term existing-path check (., .., ~, C:\x, relative dirs)
 Goto/Core/GotoQuery.cs        term splitting (/ and \ within an arg) + leaf/qualifiers/decision key
@@ -120,8 +122,12 @@ Goto/Store/VisitStore.cs      visits.tsv read (LoadAll) + increment + aging (>10
 Goto/Store/AliasStore.cs      aliases.tsv read/write (name<TAB>path, case-insensitive name lookup)
 Goto/Store/LastResolutionStore.cs  last.txt: single-row "most recent resolution" for --wrong
 Goto/Shell/PowerShellInit.cs  --init powershell script text (verbatim base — don't reword/retune)
-                              + unconditional TabCompletionBlock + optional PromptHookAddendum
+                              + unconditional TabCompletionBlock + unconditional HistoryHotkeyBlock
+                              (Ctrl+G) + optional PromptHookAddendum
 Goto/Shell/RawOutput.cs       byte-exact stdout writer (the only stdout writer in the program)
+Goto/Shell/ExternalOpener.cs  -e/-c: pure ProcessStartInfo builder + Process.Start launcher
+Goto/Shell/ProfileInstallBlock.cs  shared marker-wrapped block builder for --install's dual profiles
+Goto/Core/HistoryOrdering.cs  pure recency ordering for --history (backs the Ctrl+G hotkey)
 Goto/Ui/Vt.cs                 VT escape processing scope for stderr (P/Invoke console mode)
 Goto/Ui/PickerState.cs        pure, console-free picker state machine (unit-testable)
 Goto/Ui/Picker.cs             the only code that touches Console.ReadKey/real rendering
@@ -130,6 +136,31 @@ Goto/Ui/Picker.cs             the only code that touches Console.ReadKey/real re
 `goto.slnx` (note: `.slnx`, not `.sln` — .NET 10's `dotnet new sln` default) references both
 `Goto/Goto.csproj` and `Goto.Tests/Goto.Tests.csproj`. `build.ps1` still publishes `Goto/Goto.csproj`
 directly, not the solution (publishing the test project via AOT would be meaningless).
+
+## Key design decisions (Milestone 7)
+
+- **`-e`/`-c` and `--history` are pure `Program.cs` post-processing** — `Resolver`/`ResolveResult`
+  never learn about "explore"/"code" mode. A single `DispatchSuccessOrOpen` helper is the only place
+  that decides whether a resolved path gets printed to stdout (for the wrapper's `Set-Location`) or
+  launched externally — every code path that used to call `RawOutput.WriteStdout(path)` after a
+  successful resolution routes through it now.
+- **`-e`/`-c` compose with `-p`/`--pick`** (pick, then open the pick) but are rejected together with
+  `--list` (never resolves to one path) and with each other. Don't add new flags to this family
+  without deciding explicitly whether they're "resolve to one path" actions (composable with `-p`)
+  or "dump everything" actions (composable with `--list` instead).
+- **VS Code's `code` resolves via the `HKCU\...\App Paths\Code.exe` registry key independent of
+  `PATH`** when launched with `UseShellExecute = true` — confirmed empirically (stripping VS Code's
+  directory from `PATH` still successfully launched it). This is why `code` uses
+  `UseShellExecute = true` while `explorer.exe` uses `false` — don't "simplify" them to match.
+- **`--history` never writes `VisitStore`/`DecisionStore`** — browsing history has no query key to
+  attach a decision to, and incrementing the visit count again would double-count what the prompt
+  hook (if enabled) already records on the next `Set-Location`.
+- **`--install` writes into both Windows PowerShell 5.1's and `pwsh` 7's profiles unconditionally**
+  — the Milestone-1-documented gap is closed. Both profile paths are always attempted regardless of
+  which shell is running `--install`; failure in one doesn't block the other (best-effort, not
+  transactional).
+- Full list of M7-specific decisions (including measured performance numbers) is in
+  `docs/specs/milestone-07-polish.md`.
 
 ## Key design decisions (Milestone 6)
 
@@ -225,5 +256,6 @@ directly, not the solution (publishing the test project via AOT would be meaning
   it just falls through as an ordinary (non-matching) positional term → exit 1.
 - **`Environment.ProcessPath`**, not `Assembly.GetExecutingAssembly().Location`, is used to find the
   running exe's own path (for `--install`) — the latter returns an empty string under Native AOT.
-- **`--install`** targets Windows PowerShell 5.1's profile only (`Documents\WindowsPowerShell\
-  Microsoft.PowerShell_profile.ps1`), not `pwsh` 7's. Known gap, not yet addressed.
+- **`--install`** targeted Windows PowerShell 5.1's profile only (`Documents\WindowsPowerShell\
+  Microsoft.PowerShell_profile.ps1`), not `pwsh` 7's, at this milestone. Closed in Milestone 7 (see
+  above) — `--install` now writes into both profiles.

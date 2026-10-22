@@ -19,6 +19,9 @@ internal sealed class ParsedArgs
     public bool ListAliases { get; set; }
     public string? CompleteWord { get; set; }
     public bool Wrong { get; set; }
+    public bool Explore { get; set; }
+    public bool Code { get; set; }
+    public bool History { get; set; }
 }
 
 internal sealed class ArgParseException : Exception
@@ -171,6 +174,24 @@ internal static class ArgParser
                 continue;
             }
 
+            if (!endOfOptions && (a == "-e" || a == "--explore"))
+            {
+                result.Explore = true;
+                continue;
+            }
+
+            if (!endOfOptions && (a == "-c" || a == "--code"))
+            {
+                result.Code = true;
+                continue;
+            }
+
+            if (!endOfOptions && a == "--history")
+            {
+                result.History = true;
+                continue;
+            }
+
             if (!endOfOptions && a.Length > 1 && a[0] == '-')
                 throw new ArgParseException($"gt: unknown option '{a}'");
 
@@ -179,6 +200,12 @@ internal static class ArgParser
 
         if (result.List && result.Pick)
             throw new ArgParseException("gt: --list and --pick are mutually exclusive");
+
+        if (result.Explore && result.Code)
+            throw new ArgParseException("gt: --explore and --code are mutually exclusive");
+
+        if (result.List && (result.Explore || result.Code))
+            throw new ArgParseException("gt: --list cannot be combined with --explore/--code");
 
         return result;
     }

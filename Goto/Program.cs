@@ -60,7 +60,10 @@ static int Run(string[] args)
         return RunComplete(parsed.CompleteWord);
 
     if (parsed.Wrong)
-        return RunWrong();
+        return RunWrong(parsed.Explore, parsed.Code);
+
+    if (parsed.History)
+        return RunHistory(parsed.Explore, parsed.Code);
 
     if (parsed.Positionals.Count == 0)
     {
@@ -81,8 +84,7 @@ static int DispatchResolveResult(ParsedArgs parsed, ResolveResult result)
     switch (result.Kind)
     {
         case ResolveKind.Success:
-            RawOutput.WriteStdout(result.Path!);
-            return ExitCode.Success;
+            return DispatchSuccessOrOpen(parsed.Explore, parsed.Code, result.Path!);
 
         case ResolveKind.NoMatch:
             Console.Error.WriteLine($"gt: no match for '{string.Join(" ", parsed.Positionals)}'");
@@ -125,6 +127,27 @@ static int DispatchResolveResult(ParsedArgs parsed, ResolveResult result)
             Console.Error.WriteLine("gt: internal error");
             return ExitCode.BackendOrConfigError;
     }
+}
+
+static int DispatchSuccessOrOpen(bool explore, bool code, string path)
+{
+    if (explore || code)
+    {
+        OpenTarget target = explore ? OpenTarget.Explorer : OpenTarget.Code;
+        if (!ExternalOpener.TryLaunch(target, path, out string? error))
+        {
+            string toolName = explore ? "Explorer" : "VS Code";
+            string hint = explore ? "" : " (is 'code' on PATH?)";
+            Console.Error.WriteLine($"gt: could not open in {toolName}{hint}: {error}");
+            return ExitCode.BackendOrConfigError;
+        }
+        // Nothing on stdout -- the PowerShell wrapper's `if ($code -eq 0 -and $out)` guard
+        // naturally skips Set-Location, since opening in Explorer/Code should never also cd.
+        return ExitCode.Success;
+    }
+
+    RawOutput.WriteStdout(path);
+    return ExitCode.Success;
 }
 
 static void PrintExplain(ExplainTrace trace)
@@ -250,7 +273,7 @@ static int RunComplete(string word)
     return ExitCode.Success;
 }
 
-static int RunWrong()
+static int RunWrong(bool explore, bool code)
 {
     if (!LastResolutionStore.TryGet(out string key, out string lastPath))
     {
@@ -266,6 +289,8 @@ static int RunWrong()
     }
 
     var synthetic = ArgParser.Parse(["--pick", .. terms]);
+    synthetic.Explore = explore;
+    synthetic.Code = code;
     var result = Resolver.Resolve(synthetic, excludePath: lastPath);
 
     if (result.Kind == ResolveKind.NoMatch)
@@ -275,6 +300,37 @@ static int RunWrong()
     }
 
     return DispatchResolveResult(synthetic, result);
+}
+
+static int RunHistory(bool explore, bool code)
+{
+    var visits = VisitStore.LoadAll();
+    if (visits.Count == 0)
+    {
+        Console.Error.WriteLine("gt: no visit history yet");
+        return ExitCode.NoMatch;
+    }
+
+    IReadOnlyList<string> ordered = HistoryOrdering.OrderByRecency(visits);
+
+    if (Console.IsInputRedirected)
+    {
+        Console.Error.WriteLine($"gt: {ordered.Count} visited folder(s) (non-interactive):");
+        foreach (string p in ordered)
+            Console.Error.WriteLine($"  {p}");
+        return ExitCode.AmbiguousOrCancelled;
+    }
+
+    string? chosen = Picker.Run(ordered);
+    if (chosen is null)
+        return ExitCode.AmbiguousOrCancelled; // Esc/Ctrl+C: silent, matches the resolve-picker convention
+
+    // Deliberately NOT DecisionStore/Resolver.RecordChoice (browsing history has no query key to
+    // attach a decision to) and NOT VisitStore.Increment (if the prompt hook is enabled, the
+    // resulting Set-Location is already picked up on the next prompt redraw -- incrementing here
+    // too would double-count; without the hook this behaves like a plain `cd`, which already has
+    // no frecency effect).
+    return DispatchSuccessOrOpen(explore, code, chosen);
 }
 
 static int DispatchNeedsDecision(ParsedArgs parsed, ResolveResult result)
@@ -293,8 +349,7 @@ static int DispatchNeedsDecision(ParsedArgs parsed, ResolveResult result)
         return ExitCode.AmbiguousOrCancelled; // Esc/Ctrl+C: silent, no stdout, no recording
 
     Resolver.RecordChoice(result.Key!, chosen);
-    RawOutput.WriteStdout(chosen);
-    return ExitCode.Success;
+    return DispatchSuccessOrOpen(parsed.Explore, parsed.Code, chosen);
 }
 
 static int RunDoctor()
@@ -355,7 +410,7 @@ static int RunInit(string shell, bool withPromptHook)
         return ExitCode.UsageError;
     }
 
-    string script = PowerShellInit.Script + PowerShellInit.TabCompletionBlock;
+    string script = PowerShellInit.Script + PowerShellInit.TabCompletionBlock + PowerShellInit.HistoryHotkeyBlock;
     if (withPromptHook)
         script += PowerShellInit.PromptHookAddendum;
 
@@ -368,19 +423,30 @@ static int RunInstall(bool withPromptHook)
     string exePath = Environment.ProcessPath
         ?? throw new InvalidOperationException("could not determine own executable path");
 
-    string profilePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        "WindowsPowerShell",
-        "Microsoft.PowerShell_profile.ps1");
+    string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    // Both profile targets are valid regardless of which shell happens to run --install, and
+    // --init powershell's script content doesn't vary by PowerShell edition -- so install into
+    // both unconditionally rather than gating behind a new flag. $PROFILE's path formula (folder
+    // name differs by edition: "WindowsPowerShell" for Desktop, "PowerShell" for Core) is a
+    // stable, documented PowerShell convention -- hardcoded here rather than shelling out to
+    // `pwsh` to confirm, since that would fail outright on a machine without pwsh installed.
+    string ps51Profile = Path.Combine(documents, "WindowsPowerShell", "Microsoft.PowerShell_profile.ps1");
+    string pwsh7Profile = Path.Combine(documents, "PowerShell", "Microsoft.PowerShell_profile.ps1");
 
-    const string beginMarker = "# >>> goto >>>";
-    const string endMarker = "# <<< goto <<<";
+    bool ok1 = TryInstallProfile(ps51Profile, exePath, withPromptHook, "Windows PowerShell 5.1");
+    bool ok2 = TryInstallProfile(pwsh7Profile, exePath, withPromptHook, "PowerShell 7 (pwsh)");
 
-    string initArgs = withPromptHook ? "--init powershell --with-prompt-hook" : "--init powershell";
-    string block =
-        $"{beginMarker}\n" +
-        $"(& '{exePath}' {initArgs}) | Invoke-Expression\n" +
-        $"{endMarker}\n";
+    Console.Error.WriteLine(
+        "gt: if PowerShell refuses to run the profile, run once: " +
+        "Set-ExecutionPolicy -Scope CurrentUser RemoteSigned");
+
+    // Best-effort, not transactional: one profile can fail while the other still installs.
+    return (ok1 && ok2) ? ExitCode.Success : ExitCode.BackendOrConfigError;
+}
+
+static bool TryInstallProfile(string profilePath, string exePath, bool withPromptHook, string label)
+{
+    string block = ProfileInstallBlock.Build(exePath, withPromptHook);
 
     try
     {
@@ -390,26 +456,22 @@ static int RunInstall(bool withPromptHook)
 
         string existing = File.Exists(profilePath) ? File.ReadAllText(profilePath) : string.Empty;
 
-        if (existing.Contains(beginMarker, StringComparison.Ordinal))
+        if (existing.Contains(ProfileInstallBlock.BeginMarker, StringComparison.Ordinal))
         {
-            Console.Error.WriteLine($"gt: already installed in {profilePath}");
+            Console.Error.WriteLine($"gt: already installed for {label} in {profilePath}");
         }
         else
         {
             string sep = existing.Length > 0 && !existing.EndsWith('\n') ? "\n" : "";
             File.AppendAllText(profilePath, sep + block);
-            Console.Error.WriteLine($"gt: installed into {profilePath}");
+            Console.Error.WriteLine($"gt: installed for {label} into {profilePath}");
         }
 
-        Console.Error.WriteLine(
-            "gt: if PowerShell refuses to run the profile, run once: " +
-            "Set-ExecutionPolicy -Scope CurrentUser RemoteSigned");
-
-        return ExitCode.Success;
+        return true;
     }
     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
     {
-        Console.Error.WriteLine($"gt: failed to install: {ex.Message}");
-        return ExitCode.BackendOrConfigError;
+        Console.Error.WriteLine($"gt: failed to install for {label} ({profilePath}): {ex.Message}");
+        return false;
     }
 }

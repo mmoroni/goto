@@ -180,4 +180,73 @@ public class ArgParserTests
         var parsed = ArgParser.Parse(["--forget", "a", "--", "-b"]);
         Assert.Equal(["a", "-b"], parsed.ForgetTerms);
     }
+
+    [Theory]
+    [InlineData("-e")]
+    [InlineData("--explore")]
+    public void Parse_RecognizesExploreFlag(string flag)
+    {
+        var parsed = ArgParser.Parse([flag, "documents"]);
+        Assert.True(parsed.Explore);
+        Assert.False(parsed.Code);
+    }
+
+    [Theory]
+    [InlineData("-c")]
+    [InlineData("--code")]
+    public void Parse_RecognizesCodeFlag(string flag)
+    {
+        var parsed = ArgParser.Parse([flag, "documents"]);
+        Assert.True(parsed.Code);
+        Assert.False(parsed.Explore);
+    }
+
+    [Fact]
+    public void Parse_ExploreAndCodeTogether_Throws()
+    {
+        Assert.Throws<ArgParseException>(() => ArgParser.Parse(["-e", "-c", "documents"]));
+    }
+
+    [Fact]
+    public void Parse_ListAndExploreTogether_Throws()
+    {
+        Assert.Throws<ArgParseException>(() => ArgParser.Parse(["--list", "-e", "documents"]));
+    }
+
+    [Fact]
+    public void Parse_ListAndCodeTogether_Throws()
+    {
+        Assert.Throws<ArgParseException>(() => ArgParser.Parse(["--list", "-c", "documents"]));
+    }
+
+    [Fact]
+    public void Parse_PickAndExploreTogether_DoesNotThrow()
+    {
+        var parsed = ArgParser.Parse(["--pick", "-e", "documents"]);
+        Assert.True(parsed.Pick);
+        Assert.True(parsed.Explore);
+    }
+
+    [Fact]
+    public void Parse_PickAndCodeTogether_DoesNotThrow()
+    {
+        var parsed = ArgParser.Parse(["--pick", "-c", "documents"]);
+        Assert.True(parsed.Pick);
+        Assert.True(parsed.Code);
+    }
+
+    [Fact]
+    public void Parse_History_SetsFlag()
+    {
+        var parsed = ArgParser.Parse(["--history"]);
+        Assert.True(parsed.History);
+    }
+
+    [Fact]
+    public void Parse_HistoryWithPositionals_StillParses()
+    {
+        var parsed = ArgParser.Parse(["--history", "documents"]);
+        Assert.True(parsed.History);
+        Assert.Equal(["documents"], parsed.Positionals);
+    }
 }

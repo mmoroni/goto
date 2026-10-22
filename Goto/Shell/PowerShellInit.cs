@@ -45,6 +45,33 @@ internal static class PowerShellInit
         }
         """;
 
+    // Optional (spec section 11, Phase 7): a PSReadLine Ctrl+G hotkey that opens the picker over
+    // everything you've visited. Unconditional like TabCompletionBlock above (it only runs when
+    // the user actually presses Ctrl+G -- no recurring cost), not opt-in like the prompt hook
+    // below. Wrapped in try/catch: PSReadLine isn't guaranteed loaded in every host (ISE,
+    // non-interactive/scripted profile loads, or a user who removed the module), and a missing
+    // cmdlet here must never break profile load.
+    public const string HistoryHotkeyBlock = """
+
+        try {
+            Set-PSReadLineKeyHandler -Chord 'Ctrl+g' -ScriptBlock {
+                [Microsoft.PowerShell.PSConsoleReadLine]::RevertLine()
+                $prevEnc = [Console]::OutputEncoding
+                [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+                try {
+                    $out  = & $global:GOTO_EXE --history
+                    $code = $LASTEXITCODE
+                } finally { [Console]::OutputEncoding = $prevEnc }
+                if ($code -eq 0 -and $out) {
+                    Set-Location -LiteralPath (@($out)[0])
+                }
+                [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
+            }
+        } catch {
+            # PSReadLine not loaded/available in this host -- no-op rather than breaking the profile.
+        }
+        """;
+
     // Optional (spec section 5, Phase 5): learn from plain `cd`, not just `goto`. Not part
     // of the verbatim base script above -- opt-in via `--init powershell --with-prompt-hook`,
     // since wrapping `prompt` shells out to goto.exe on every prompt redraw, a continuous
