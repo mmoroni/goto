@@ -57,4 +57,48 @@ public class MatcherTests
 
         Assert.True(Matcher.IsMatch(@"C:\anything\Documents", query, MatchMode.Exact));
     }
+
+    [Fact]
+    public void Abbreviation_DlMatchesDownloads()
+    {
+        var query = GotoQuery.FromPositionals(["dl"]);
+
+        Assert.True(Matcher.IsMatch(@"C:\Users\alice\Downloads", query, MatchMode.Abbreviation));
+    }
+
+    [Fact]
+    public void Abbreviation_DocMatchesDocuments()
+    {
+        // Spec's own "d*o*c*" notation, worked literally: d anchors, o at index 1, c at index 2.
+        var query = GotoQuery.FromPositionals(["doc"]);
+
+        Assert.True(Matcher.IsMatch(@"C:\tree\documents", query, MatchMode.Abbreviation));
+    }
+
+    [Fact]
+    public void Abbreviation_FirstCharMismatch_Fails()
+    {
+        var query = GotoQuery.FromPositionals(["xl"]);
+
+        Assert.False(Matcher.IsMatch(@"C:\Users\alice\Downloads", query, MatchMode.Abbreviation));
+    }
+
+    [Fact]
+    public void Abbreviation_OutOfOrderCharacters_Fails()
+    {
+        var query = GotoQuery.FromPositionals(["abc"]);
+
+        // leaf "acb": after anchoring 'a' and matching 'b' at index 2, 'c' is searched starting
+        // at index 3 -- past the end of a 3-character leaf -- so order is genuinely enforced.
+        Assert.False(Matcher.IsMatch(@"C:\tree\acb", query, MatchMode.Abbreviation));
+    }
+
+    [Fact]
+    public void Abbreviation_WithQualifier_StillAppliesAncestorCheck()
+    {
+        var query = GotoQuery.FromPositionals(["user", "dl"]);
+
+        Assert.True(Matcher.IsMatch(@"C:\Users\alice\Downloads", query, MatchMode.Abbreviation));
+        Assert.False(Matcher.IsMatch(@"C:\Projects\Downloads", query, MatchMode.Abbreviation));
+    }
 }

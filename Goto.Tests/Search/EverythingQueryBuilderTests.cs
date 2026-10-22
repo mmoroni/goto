@@ -45,9 +45,9 @@ public class EverythingQueryBuilderTests
     }
 
     [Fact]
-    public void Build_UnsupportedMode_Throws()
+    public void Build_AbbreviationMode_ProducesWildcardWfnQuery()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            EverythingQueryBuilder.Build("documents", [], MatchMode.Abbreviation));
+        string query = EverythingQueryBuilder.Build("doc", [], MatchMode.Abbreviation);
+        Assert.Equal("folder: wfn:\"d*o*c*\"", query);
     }
 }

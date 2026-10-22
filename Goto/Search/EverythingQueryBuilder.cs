@@ -11,6 +11,7 @@ internal static class EverythingQueryBuilder
             MatchMode.Exact => $"folder: wfn:{term}",
             MatchMode.Prefix => $"folder: startwith:{term}",
             MatchMode.Contains => $"folder: {term}",
+            MatchMode.Abbreviation => $"folder: wfn:{Quote(BuildAbbreviationPattern(leaf))}",
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "unsupported mode for Everything backend"),
         };
 
@@ -30,4 +31,7 @@ internal static class EverythingQueryBuilder
     /// * and ? are preserved as-is -- Everything treats them as wildcards inside quotes too.
     /// </summary>
     internal static string Quote(string term) => $"\"{term.Replace("\"", "")}\"";
+
+    /// <summary>Builds the "d*o*c*" first-char-anchored wildcard pattern for Everything's wfn: operator.</summary>
+    private static string BuildAbbreviationPattern(string leaf) => string.Concat(leaf.Select(c => $"{c}*"));
 }

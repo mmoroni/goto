@@ -42,8 +42,45 @@ internal static class Matcher
         MatchMode.Exact => string.Equals(leaf, term, StringComparison.OrdinalIgnoreCase),
         MatchMode.Prefix => leaf.StartsWith(term, StringComparison.OrdinalIgnoreCase),
         MatchMode.Contains => leaf.Contains(term, StringComparison.OrdinalIgnoreCase),
-        _ => false, // Abbreviation (T4) is Milestone 6
+        MatchMode.Abbreviation => IsAbbreviation(leaf, term),
+        _ => false,
     };
+
+    /// <summary>
+    /// T4: first-char-anchored wildcard match (spec's "d*o*c*" notation). The term's first
+    /// character must equal the leaf's first character; every remaining term character must
+    /// then appear, in order, as a (not necessarily contiguous) subsequence of the rest of
+    /// the leaf.
+    /// </summary>
+    private static bool IsAbbreviation(string leaf, string term)
+    {
+        if (term.Length == 0 || leaf.Length == 0)
+            return false;
+
+        if (char.ToLowerInvariant(term[0]) != char.ToLowerInvariant(leaf[0]))
+            return false;
+
+        int leafIdx = 1;
+        for (int termIdx = 1; termIdx < term.Length; termIdx++)
+        {
+            char want = char.ToLowerInvariant(term[termIdx]);
+            bool found = false;
+            while (leafIdx < leaf.Length)
+            {
+                bool isMatch = char.ToLowerInvariant(leaf[leafIdx]) == want;
+                leafIdx++;
+                if (isMatch)
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                return false;
+        }
+
+        return true;
+    }
 
     internal static List<string> GetAncestorNames(string candidatePath)
     {

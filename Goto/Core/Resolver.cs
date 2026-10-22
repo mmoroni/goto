@@ -14,7 +14,7 @@ internal enum ResolveKind
     BackendError,
 }
 
-internal enum ExplainSource { PathShortcut, Decision, Tier }
+internal enum ExplainSource { PathShortcut, Alias, Decision, Tier }
 
 internal sealed record ExplainTrace(ExplainSource Source, MatchMode? Tier, IReadOnlyList<ScoreBreakdown> Breakdown);
 
@@ -24,14 +24,18 @@ internal sealed record ResolveResult(
     IReadOnlyList<string>? Candidates = null,
     string? Key = null,
     string? LeafTerm = null,
-    ExplainTrace? Explain = null);
+    ExplainTrace? Explain = null,
+    IReadOnlyList<string>? DidYouMean = null);
 
 internal static class Resolver
 {
-    private static readonly MatchMode[] Tiers = [MatchMode.Exact, MatchMode.Prefix, MatchMode.Contains];
+    private static readonly MatchMode[] Tiers =
+        [MatchMode.Exact, MatchMode.Prefix, MatchMode.Contains, MatchMode.Abbreviation];
     private const int ExistenceCheckTopN = 50;
 
-    public static ResolveResult Resolve(ParsedArgs args, IFolderSearcher? searcherOverride = null, Config? configOverride = null)
+    public static ResolveResult Resolve(
+        ParsedArgs args, IFolderSearcher? searcherOverride = null,
+        Config? configOverride = null, string? excludePath = null)
     {
         // Step 0 (spec section 7): single-term existing-path shortcut. Sees the
         // RAW, unsplit token -- "C:\Windows" must not be split before this check.
@@ -43,6 +47,28 @@ internal static class Resolver
                 Explain: new ExplainTrace(ExplainSource.PathShortcut, null, []));
         }
 
+        // Step 1 (spec section 7): ALIAS lookup. "@name" or a bare exact alias-name match. Same
+        // single-term gate as step 0 -- a multi-term query is a qualifier+leaf search, never an
+        // alias lookup, even if the first term happens to collide with an alias name. Fires even
+        // under --list/--pick (same reasoning as step 0: a deliberate bookmark has no candidate
+        // set to list or picker to force). No existence check or stale-entry cleanup here, unlike
+        // step 2's decision cache -- an alias is a manual, user-owned bookmark, not goto's
+        // opportunistic cache; auto-deleting it because the target is momentarily missing (e.g.
+        // an unmounted share) would be surprising. Let Set-Location surface the error downstream.
+        if (args.Positionals.Count == 1)
+        {
+            string raw = args.Positionals[0];
+            string candidateName = raw.StartsWith('@') ? raw[1..] : raw;
+
+            if (candidateName.Length > 0
+                && !candidateName.Contains('/') && !candidateName.Contains('\\')
+                && AliasStore.TryGet(candidateName, out string aliasPath))
+            {
+                return new ResolveResult(ResolveKind.Success, aliasPath,
+                    Explain: new ExplainTrace(ExplainSource.Alias, null, []));
+            }
+        }
+
         if (args.Positionals.Count == 0)
             return new ResolveResult(ResolveKind.NoMatch, null);
 
@@ -50,12 +76,13 @@ internal static class Resolver
         Config config = configOverride ?? Config.Load();
 
         // Step 2: DECISION lookup + stale cleanup. Skipped entirely for --list/--pick, which both
-        // bypass the cache by design. (Step 1 ALIAS is deferred to Milestone 6.)
+        // bypass the cache by design.
         if (!args.List && !args.Pick && DecisionStore.TryGet(query.Key, out string decidedPath))
         {
             if (Directory.Exists(decidedPath))
             {
                 VisitStore.Increment(decidedPath);
+                LastResolutionStore.Set(query.Key, decidedPath);
                 return new ResolveResult(ResolveKind.Success, decidedPath,
                     Explain: new ExplainTrace(ExplainSource.Decision, null, []));
             }
@@ -63,7 +90,7 @@ internal static class Resolver
             DecisionStore.Remove(query.Key);
         }
 
-        // Step 3: TIERS T1-T3, stop at first tier with >=1 verified match. Applies to
+        // Step 3: TIERS T1-T4, stop at first tier with >=1 verified match. Applies to
         // --list/--pick too: --list shows what a plain `goto <term>` would currently consider.
         IFolderSearcher searcher;
         if (searcherOverride is not null)
@@ -88,6 +115,8 @@ internal static class Resolver
             string[] candidates = raw
                 .Where(p => Matcher.IsMatch(p, query, mode))
                 .Where(p => !config.IsExcluded(p))
+                .Where(p => excludePath is null ||
+                            !string.Equals(PathCanon.Canonicalize(p), excludePath, StringComparison.OrdinalIgnoreCase))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
@@ -102,9 +131,14 @@ internal static class Resolver
         if (searcher is WalkSearcher { LastSearchWasIncomplete: true })
             Console.Error.WriteLine("gt: (search incomplete)");
 
-        // Step 4: no tier matched.
+        // Step 4: no tier matched at all. Typo tolerance: compare the leaf term against leaf
+        // names already present in visits.tsv (no filesystem search needed).
         if (verified.Length == 0)
-            return new ResolveResult(ResolveKind.NoMatch, null);
+        {
+            IReadOnlyList<string> suggestions = ComputeDidYouMean(query.Leaf);
+            return new ResolveResult(ResolveKind.NoMatch, null,
+                DidYouMean: suggestions.Count > 0 ? suggestions : null);
+        }
 
         // Rank, sort descending, drop phantom (stale) top candidates -- shared by every mode below.
         IReadOnlyDictionary<string, (int VisitCount, DateTime LastVisitUtc)> visits = VisitStore.LoadAll();
@@ -134,8 +168,7 @@ internal static class Resolver
         {
             if (ordered.Length == 1)
             {
-                DecisionStore.Upsert(query.Key, ordered[0]);
-                VisitStore.Increment(ordered[0]);
+                RecordChoice(query.Key, ordered[0]);
                 return new ResolveResult(ResolveKind.Success, ordered[0], Explain: explain);
             }
 
@@ -145,8 +178,7 @@ internal static class Resolver
         // Step 5 (spec section 7): 1 match -> go.
         if (ordered.Length == 1)
         {
-            DecisionStore.Upsert(query.Key, ordered[0]);
-            VisitStore.Increment(ordered[0]);
+            RecordChoice(query.Key, ordered[0]);
             return new ResolveResult(ResolveKind.Success, ordered[0], Explain: explain);
         }
 
@@ -154,8 +186,7 @@ internal static class Resolver
         double margin = existing[0].Total - existing[1].Total;
         if (margin >= config.DominanceMargin)
         {
-            DecisionStore.Upsert(query.Key, ordered[0]);
-            VisitStore.Increment(ordered[0]);
+            RecordChoice(query.Key, ordered[0]);
             return new ResolveResult(ResolveKind.Success, ordered[0], Explain: explain);
         }
 
@@ -191,12 +222,34 @@ internal static class Resolver
     }
 
     /// <summary>
-    /// Records a choice made outside Resolve's own call frame (an interactive picker selection).
-    /// Reuses exactly the two calls step 6 already makes for an auto-resolved match.
+    /// Compares the leaf term against leaf names already present in visits.tsv using edit
+    /// distance ≤ 2, for a "did you mean X?" suggestion when nothing matched at all.
+    /// </summary>
+    private static IReadOnlyList<string> ComputeDidYouMean(string leafTerm)
+    {
+        IReadOnlyDictionary<string, (int VisitCount, DateTime LastVisitUtc)> visits = VisitStore.LoadAll();
+
+        return visits.Keys
+            .Select(Path.GetFileName)
+            .Where(n => !string.IsNullOrEmpty(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(n => (Name: n!, Distance: EditDistance.Levenshtein(n!, leafTerm)))
+            .Where(x => x.Distance <= 2)
+            .OrderBy(x => x.Distance)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(3)
+            .Select(x => x.Name)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Records a choice made outside Resolve's own call frame (an interactive picker selection),
+    /// and the single write path every auto-resolve branch inside Resolve itself uses too.
     /// </summary>
     public static void RecordChoice(string key, string path)
     {
         DecisionStore.Upsert(key, path);
         VisitStore.Increment(path);
+        LastResolutionStore.Set(key, path);
     }
 }

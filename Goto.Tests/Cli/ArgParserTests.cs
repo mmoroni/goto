@@ -86,4 +86,98 @@ public class ArgParserTests
         var parsed = ArgParser.Parse(["--add", @"C:\some\folder"]);
         Assert.Equal(@"C:\some\folder", parsed.AddPath);
     }
+
+    [Fact]
+    public void Parse_AliasRequiresNameAndPath_ThrowsWithZeroOrOneValue()
+    {
+        Assert.Throws<ArgParseException>(() => ArgParser.Parse(["--alias"]));
+        Assert.Throws<ArgParseException>(() => ArgParser.Parse(["--alias", "work"]));
+    }
+
+    [Fact]
+    public void Parse_AliasWithNameAndPath_SetsBoth()
+    {
+        var parsed = ArgParser.Parse(["--alias", "work", @"D:\Clients\Acme"]);
+        Assert.Equal("work", parsed.AliasName);
+        Assert.Equal(@"D:\Clients\Acme", parsed.AliasPath);
+    }
+
+    [Fact]
+    public void Parse_UnaliasRequiresName_Throws()
+    {
+        Assert.Throws<ArgParseException>(() => ArgParser.Parse(["--unalias"]));
+    }
+
+    [Fact]
+    public void Parse_UnaliasWithName_SetsUnaliasName()
+    {
+        var parsed = ArgParser.Parse(["--unalias", "work"]);
+        Assert.Equal("work", parsed.UnaliasName);
+    }
+
+    [Fact]
+    public void Parse_Aliases_SetsFlag()
+    {
+        var parsed = ArgParser.Parse(["--aliases"]);
+        Assert.True(parsed.ListAliases);
+    }
+
+    [Fact]
+    public void Parse_CompleteWithEmptyString_IsDistinctFromAbsent()
+    {
+        var withEmpty = ArgParser.Parse(["--complete", ""]);
+        var absent = ArgParser.Parse(["documents"]);
+
+        Assert.Equal("", withEmpty.CompleteWord);
+        Assert.Null(absent.CompleteWord);
+    }
+
+    [Fact]
+    public void Parse_CompleteRequiresArgument_Throws()
+    {
+        Assert.Throws<ArgParseException>(() => ArgParser.Parse(["--complete"]));
+    }
+
+    [Fact]
+    public void Parse_CompleteEqualsForm_SetsCompleteWord()
+    {
+        var parsed = ArgParser.Parse(["--complete=Do"]);
+        Assert.Equal("Do", parsed.CompleteWord);
+    }
+
+    [Fact]
+    public void Parse_CompleteEqualsForm_EmptyWord_IsNeverElided()
+    {
+        // The whole "--complete=" token is non-empty even when the word part after '=' is --
+        // this is the real fix for PowerShell dropping a literal empty-string argv element.
+        var parsed = ArgParser.Parse(["--complete="]);
+        Assert.Equal("", parsed.CompleteWord);
+    }
+
+    [Fact]
+    public void Parse_Wrong_SetsFlag()
+    {
+        var parsed = ArgParser.Parse(["--wrong"]);
+        Assert.True(parsed.Wrong);
+    }
+
+    [Fact]
+    public void Parse_ForgetCollectsAllFollowingTerms()
+    {
+        var parsed = ArgParser.Parse(["--forget", "a", "b", "c"]);
+        Assert.Equal(["a", "b", "c"], parsed.ForgetTerms);
+    }
+
+    [Fact]
+    public void Parse_ForgetWithNothingAfter_Throws()
+    {
+        Assert.Throws<ArgParseException>(() => ArgParser.Parse(["--forget"]));
+    }
+
+    [Fact]
+    public void Parse_ForgetTreatsDoubleDashAsToggleNotStop()
+    {
+        var parsed = ArgParser.Parse(["--forget", "a", "--", "-b"]);
+        Assert.Equal(["a", "-b"], parsed.ForgetTerms);
+    }
 }

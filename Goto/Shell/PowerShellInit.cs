@@ -24,6 +24,27 @@ internal static class PowerShellInit
         Set-Alias gt goto
         """;
 
+    // Optional (spec section 5, Phase 6): tab completion. Unlike the prompt hook below, this has
+    // no recurring runtime cost (it only runs when the user presses Tab), so it's unconditional --
+    // always appended, no opt-in flag needed. The base Script constant above stays untouched.
+    public const string TabCompletionBlock = """
+
+        Register-ArgumentCompleter -Native -CommandName goto, gt -ScriptBlock {
+            param($wordToComplete, $commandAst, $cursorPosition)
+            # "--complete=$wordToComplete" as ONE token, not two: PowerShell silently drops a
+            # literal empty-string ARGUMENT when invoking a native exe (confirmed empirically,
+            # in any position, not just trailing) -- exactly $wordToComplete when the user
+            # presses Tab with nothing typed yet. Folding it into a single, never-empty token
+            # sidesteps the problem entirely instead of relying on argument-position workarounds.
+            $out = & $global:GOTO_EXE "--complete=$wordToComplete" 2>$null
+            foreach ($line in $out) {
+                if ($line) {
+                    [System.Management.Automation.CompletionResult]::new($line, $line, 'ParameterValue', $line)
+                }
+            }
+        }
+        """;
+
     // Optional (spec section 5, Phase 5): learn from plain `cd`, not just `goto`. Not part
     // of the verbatim base script above -- opt-in via `--init powershell --with-prompt-hook`,
     // since wrapping `prompt` shells out to goto.exe on every prompt redraw, a continuous

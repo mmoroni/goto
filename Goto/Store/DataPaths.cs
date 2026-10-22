@@ -5,6 +5,8 @@ internal static class DataPaths
     public static string DecisionsFile => Path.Combine(ResolveDataDir(), "decisions.tsv");
     public static string VisitsFile => Path.Combine(ResolveDataDir(), "visits.tsv");
     public static string ConfigFile => Path.Combine(ResolveDataDir(), "config.txt");
+    public static string AliasesFile => Path.Combine(ResolveDataDir(), "aliases.tsv");
+    public static string LastFile => Path.Combine(ResolveDataDir(), "last.txt");
 
     public static string ResolveDataDir()
     {

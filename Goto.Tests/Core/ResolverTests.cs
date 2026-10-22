@@ -1,5 +1,6 @@
 using Goto.Cli;
 using Goto.Core;
+using Goto.Search;
 using Goto.Store;
 using Goto.Tests.Fakes;
 
@@ -326,5 +327,207 @@ public class ResolverTests
 
         string visitsContent = File.ReadAllText(DataPaths.VisitsFile);
         Assert.Contains(target, visitsContent, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void RecordChoice_AlsoWritesLastResolution()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("chosen");
+
+        Resolver.RecordChoice("some key", target);
+
+        Assert.True(LastResolutionStore.TryGet(out string key, out string path));
+        Assert.Equal("some key", key);
+        Assert.Equal(target, path, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_SingleMatchAutoResolve_WritesLastResolution()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("documents");
+
+        var fake = new FakeFolderSearcher([target]);
+        Resolver.Resolve(ArgParser.Parse(["documents"]), fake, new Config { Exclude = [] });
+
+        Assert.True(LastResolutionStore.TryGet(out string key, out string path));
+        Assert.Equal("documents", key);
+        Assert.Equal(target, path, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_DecisionCacheHit_AlsoWritesLastResolution()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("documents");
+        DecisionStore.Upsert("documents", target);
+
+        var fake = new FakeFolderSearcher([]);
+        Resolver.Resolve(ArgParser.Parse(["documents"]), fake);
+
+        Assert.True(LastResolutionStore.TryGet(out string key, out string path));
+        Assert.Equal("documents", key);
+        Assert.Equal(target, path, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_AliasLookup_FiresForAtPrefixedName()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("acme");
+        AliasStore.Upsert("work", target);
+
+        var result = Resolver.Resolve(ArgParser.Parse(["@work"]));
+
+        Assert.Equal(ResolveKind.Success, result.Kind);
+        Assert.Equal(target, result.Path, ignoreCase: true);
+        Assert.Equal(ExplainSource.Alias, result.Explain!.Source);
+    }
+
+    [Fact]
+    public void Resolve_AliasLookup_FiresForBareName()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("acme");
+        AliasStore.Upsert("work", target);
+
+        var result = Resolver.Resolve(ArgParser.Parse(["work"]));
+
+        Assert.Equal(ResolveKind.Success, result.Kind);
+        Assert.Equal(target, result.Path, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_AliasLookup_SkippedForMultiTermQuery()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        AliasStore.Upsert("work", tree.CreateDir("acme"));
+
+        // "work" is an alias, but a second term makes this a qualifier+leaf search, not a
+        // bookmark lookup -- must fall through to the normal tiered search (which finds nothing).
+        var fake = new FakeFolderSearcher([]);
+        var result = Resolver.Resolve(ArgParser.Parse(["work", "documents"]), fake);
+
+        Assert.Equal(ResolveKind.NoMatch, result.Kind);
+    }
+
+    [Fact]
+    public void Resolve_AliasLookup_SkippedForTokenContainingSlash()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        AliasStore.Upsert("work", tree.CreateDir("acme"));
+
+        var fake = new FakeFolderSearcher([]);
+        var result = Resolver.Resolve(ArgParser.Parse(["work/documents"]), fake);
+
+        Assert.Equal(ResolveKind.NoMatch, result.Kind);
+    }
+
+    [Fact]
+    public void Resolve_AliasLookup_FiresUnderListAndPick()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("acme");
+        AliasStore.Upsert("work", target);
+
+        var listResult = Resolver.Resolve(ArgParser.Parse(["--list", "@work"]));
+        var pickResult = Resolver.Resolve(ArgParser.Parse(["--pick", "@work"]));
+
+        Assert.Equal(ResolveKind.Success, listResult.Kind);
+        Assert.Equal(target, listResult.Path, ignoreCase: true);
+        Assert.Equal(ResolveKind.Success, pickResult.Kind);
+        Assert.Equal(target, pickResult.Path, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_AbbreviationTier_ReachedWhenNoOtherTierMatches()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("Downloads");
+
+        // "dl" doesn't exact/prefix/contains-match "Downloads" -- only T4 Abbreviation does.
+        var fake = new FakeFolderSearcher([target]);
+        var result = Resolver.Resolve(ArgParser.Parse(["dl"]), fake, new Config { Exclude = [] });
+
+        Assert.Equal(ResolveKind.Success, result.Kind);
+        Assert.Equal(target, result.Path, ignoreCase: true);
+        Assert.Equal(MatchMode.Abbreviation, result.Explain!.Tier);
+    }
+
+    [Fact]
+    public void Resolve_NoTierMatchedAtAll_PopulatesDidYouMean()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string visited = tree.CreateDir("Documents");
+        VisitStore.Increment(visited); // seeds "Documents" as a known leaf name
+
+        var fake = new FakeFolderSearcher([]); // no tier finds anything at all
+        var result = Resolver.Resolve(ArgParser.Parse(["Documnts"]), fake); // one edit away
+
+        Assert.Equal(ResolveKind.NoMatch, result.Kind);
+        Assert.NotNull(result.DidYouMean);
+        Assert.Contains("Documents", result.DidYouMean!);
+    }
+
+    [Fact]
+    public void Resolve_PhantomOnlyNoMatch_DoesNotPopulateDidYouMean()
+    {
+        using var home = new TempGotoHome();
+        // Separate trees so the real "Documents" dir and the phantom "documents" path can
+        // never accidentally be the SAME directory on NTFS's case-insensitive filesystem.
+        using var visitedTree = new TempTree();
+        using var phantomTree = new TempTree();
+        string visited = visitedTree.CreateDir("Documents");
+        VisitStore.Increment(visited);
+
+        // A tier DID match something (a phantom), so this is the "stale, not a typo" NoMatch --
+        // did-you-mean must not fire here even though "Documents" is a known close leaf name.
+        string phantom = Path.Combine(phantomTree.Root, "documents"); // never created on disk
+        var fake = new FakeFolderSearcher([phantom]);
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake, new Config { Exclude = [] });
+
+        Assert.Equal(ResolveKind.NoMatch, result.Kind);
+        Assert.Null(result.DidYouMean);
+    }
+
+    [Fact]
+    public void Resolve_ExcludePath_DropsExcludedCandidate()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string first = tree.CreateDir(@"a-parent\documents");
+        string second = tree.CreateDir(@"b-parent\documents");
+
+        var fake = new FakeFolderSearcher([first, second]);
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake,
+            new Config { Exclude = [] }, excludePath: first);
+
+        Assert.Equal(ResolveKind.Success, result.Kind);
+        Assert.Equal(second, result.Path, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_ExcludePath_LastRemainingCandidateExcluded_ReturnsNoMatch()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string only = tree.CreateDir("documents");
+
+        var fake = new FakeFolderSearcher([only]);
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake,
+            new Config { Exclude = [] }, excludePath: only);
+
+        Assert.Equal(ResolveKind.NoMatch, result.Kind);
     }
 }

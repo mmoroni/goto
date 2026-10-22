@@ -44,6 +44,24 @@ static int Run(string[] args)
     if (parsed.AddPath is not null)
         return RunAdd(parsed.AddPath);
 
+    if (parsed.ForgetTerms is not null)
+        return RunForget(parsed.ForgetTerms);
+
+    if (parsed.AliasName is not null)
+        return RunAlias(parsed.AliasName, parsed.AliasPath!);
+
+    if (parsed.UnaliasName is not null)
+        return RunUnalias(parsed.UnaliasName);
+
+    if (parsed.ListAliases)
+        return RunAliasesList();
+
+    if (parsed.CompleteWord is not null)
+        return RunComplete(parsed.CompleteWord);
+
+    if (parsed.Wrong)
+        return RunWrong();
+
     if (parsed.Positionals.Count == 0)
     {
         Console.Error.WriteLine("usage: gt <term> [term...] | gt --init powershell | gt --install");
@@ -55,6 +73,11 @@ static int Run(string[] args)
     if (parsed.Explain && result.Explain is not null)
         PrintExplain(result.Explain);
 
+    return DispatchResolveResult(parsed, result);
+}
+
+static int DispatchResolveResult(ParsedArgs parsed, ResolveResult result)
+{
     switch (result.Kind)
     {
         case ResolveKind.Success:
@@ -63,6 +86,12 @@ static int Run(string[] args)
 
         case ResolveKind.NoMatch:
             Console.Error.WriteLine($"gt: no match for '{string.Join(" ", parsed.Positionals)}'");
+            if (result.DidYouMean is { Count: > 0 } didYouMean)
+            {
+                Console.Error.WriteLine(didYouMean.Count == 1
+                    ? $"gt: did you mean '{didYouMean[0]}'?"
+                    : $"gt: did you mean one of: {string.Join(", ", didYouMean)}?");
+            }
             return ExitCode.NoMatch;
 
         case ResolveKind.TooMany:
@@ -103,6 +132,7 @@ static void PrintExplain(ExplainTrace trace)
     string sourceDesc = trace.Source switch
     {
         ExplainSource.PathShortcut => "path shortcut",
+        ExplainSource.Alias => "alias",
         ExplainSource.Decision => "decision",
         ExplainSource.Tier => $"tier ({trace.Tier.ToString()!.ToLowerInvariant()})",
         _ => "unknown",
@@ -140,6 +170,111 @@ static int RunAdd(string path)
     }
 
     return ExitCode.Success; // prints nothing, always exit 0
+}
+
+static int RunForget(IReadOnlyList<string> terms)
+{
+    GotoQuery query = GotoQuery.FromPositionals(terms);
+    bool existed = DecisionStore.TryGet(query.Key, out _);
+    DecisionStore.Remove(query.Key);
+
+    Console.Error.WriteLine(existed
+        ? $"gt: forgot '{string.Join(" ", terms)}'"
+        : $"gt: no remembered decision for '{string.Join(" ", terms)}'");
+
+    return ExitCode.Success; // both outcomes exit 0 -- "already forgotten" isn't an error
+}
+
+static int RunAlias(string name, string path)
+{
+    string full;
+    try
+    {
+        full = Path.GetFullPath(path);
+    }
+    catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+    {
+        Console.Error.WriteLine($"gt: invalid path '{path}': {ex.Message}");
+        return ExitCode.UsageError;
+    }
+
+    if (!Directory.Exists(full))
+        Console.Error.WriteLine($"gt: warning: '{full}' does not exist yet (alias saved anyway)");
+
+    AliasStore.Upsert(name, full);
+    Console.Error.WriteLine($"gt: aliased '{name}' -> {full}");
+    return ExitCode.Success;
+}
+
+static int RunUnalias(string name)
+{
+    bool existed = AliasStore.TryGet(name, out _);
+    AliasStore.Remove(name);
+    Console.Error.WriteLine(existed ? $"gt: removed alias '{name}'" : $"gt: no such alias '{name}'");
+    return ExitCode.Success;
+}
+
+static int RunAliasesList()
+{
+    var aliases = AliasStore.LoadAll();
+    if (aliases.Count == 0)
+    {
+        Console.WriteLine("gt: no aliases defined");
+        return ExitCode.Success;
+    }
+
+    Console.WriteLine("gt: aliases:");
+    foreach (var (name, path) in aliases.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase))
+        Console.WriteLine($"  {name} -> {path}");
+
+    return ExitCode.Success;
+}
+
+static int RunComplete(string word)
+{
+    var visits = VisitStore.LoadAll();
+
+    var candidates = visits
+        .GroupBy(kv => Path.GetFileName(kv.Key), StringComparer.OrdinalIgnoreCase)
+        .Where(g => !string.IsNullOrEmpty(g.Key))
+        .Select(g => (Name: g.Key, Best: g.OrderByDescending(kv => kv.Value.VisitCount).First().Value))
+        .Where(x => x.Name.StartsWith(word, StringComparison.OrdinalIgnoreCase))
+        .OrderByDescending(x => x.Best.VisitCount)
+        .ThenByDescending(x => x.Best.LastVisitUtc)
+        .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+        .Select(x => x.Name);
+
+    foreach (string name in candidates)
+        Console.WriteLine(name);
+
+    return ExitCode.Success;
+}
+
+static int RunWrong()
+{
+    if (!LastResolutionStore.TryGet(out string key, out string lastPath))
+    {
+        Console.Error.WriteLine("gt: nothing to correct (no previous resolution remembered)");
+        return ExitCode.NoMatch;
+    }
+
+    string[] terms = key.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    if (terms.Length == 0)
+    {
+        Console.Error.WriteLine("gt: nothing to correct (no previous resolution remembered)");
+        return ExitCode.NoMatch;
+    }
+
+    var synthetic = ArgParser.Parse(["--pick", .. terms]);
+    var result = Resolver.Resolve(synthetic, excludePath: lastPath);
+
+    if (result.Kind == ResolveKind.NoMatch)
+    {
+        Console.Error.WriteLine($"gt: no other candidate for '{string.Join(" ", terms)}' besides '{lastPath}'");
+        return ExitCode.NoMatch;
+    }
+
+    return DispatchResolveResult(synthetic, result);
 }
 
 static int DispatchNeedsDecision(ParsedArgs parsed, ResolveResult result)
@@ -220,9 +355,10 @@ static int RunInit(string shell, bool withPromptHook)
         return ExitCode.UsageError;
     }
 
-    string script = withPromptHook
-        ? PowerShellInit.Script + PowerShellInit.PromptHookAddendum
-        : PowerShellInit.Script;
+    string script = PowerShellInit.Script + PowerShellInit.TabCompletionBlock;
+    if (withPromptHook)
+        script += PowerShellInit.PromptHookAddendum;
+
     RawOutput.WriteStdout(script);
     return ExitCode.Success;
 }
