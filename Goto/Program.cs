@@ -32,6 +32,9 @@ static int Run(string[] args)
         return ExitCode.UsageError;
     }
 
+    if (parsed.Help)
+        return RunHelp();
+
     if (parsed.InitShell is not null)
         return RunInit(parsed.InitShell, parsed.WithPromptHook);
 
@@ -67,7 +70,7 @@ static int Run(string[] args)
 
     if (parsed.Positionals.Count == 0)
     {
-        Console.Error.WriteLine("usage: gt <term> [term...] | gt --init powershell | gt --install");
+        Console.Error.WriteLine(HelpText.ShortUsage);
         return ExitCode.UsageError;
     }
 
@@ -400,6 +403,15 @@ static bool TryProbeWrite(string dir, out string? error)
         error = ex.Message;
         return false;
     }
+}
+
+static int RunHelp()
+{
+    // Explicit, successful request -- stdout, exit 0 (unlike the terse ShortUsage one-liner
+    // printed to stderr on a bare usage error). Human-facing, not consumed by any script, so
+    // Console.WriteLine is fine here -- no need for the RawOutput chokepoint.
+    Console.WriteLine(HelpText.Full);
+    return ExitCode.Success;
 }
 
 static int RunInit(string shell, bool withPromptHook)

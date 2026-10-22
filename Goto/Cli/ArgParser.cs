@@ -22,6 +22,7 @@ internal sealed class ParsedArgs
     public bool Explore { get; set; }
     public bool Code { get; set; }
     public bool History { get; set; }
+    public bool Help { get; set; }
 }
 
 internal sealed class ArgParseException : Exception
@@ -43,6 +44,12 @@ internal static class ArgParser
             if (!endOfOptions && a == "--")
             {
                 endOfOptions = true;
+                continue;
+            }
+
+            if (!endOfOptions && (a == "-h" || a == "--help"))
+            {
+                result.Help = true;
                 continue;
             }
 

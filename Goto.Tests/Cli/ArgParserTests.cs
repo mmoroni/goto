@@ -249,4 +249,13 @@ public class ArgParserTests
         Assert.True(parsed.History);
         Assert.Equal(["documents"], parsed.Positionals);
     }
+
+    [Theory]
+    [InlineData("-h")]
+    [InlineData("--help")]
+    public void Parse_RecognizesHelpFlag(string flag)
+    {
+        var parsed = ArgParser.Parse([flag]);
+        Assert.True(parsed.Help);
+    }
 }

@@ -19,3 +19,13 @@
 
 Update a milestone's status and implementation notes when it ships, the same way
 `milestone-01-skeleton.md` documents Milestone 1.
+
+## Post-milestone addenda
+
+Changes made after the 7-milestone build order completed, not called for by the original spec —
+documented the same way (status, motivation, implementation notes, key files) but numbered
+separately from the milestones since they're not part of spec §12's build order.
+
+| Addendum | File | Status |
+|---|---|---|
+| 1 | [addendum-01-help-command.md](./addendum-01-help-command.md) | Implemented |

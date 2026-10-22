@@ -18,7 +18,9 @@ frecency + `--explain` + prompt hook; aliases + completion + typo/abbreviation t
 open-elsewhere + Ctrl+G history hotkey + dual-profile `--install` + measured performance budget) —
 the full original design spec's 7-milestone build order is complete. When a milestone ships, update
 its status and add implementation notes in its spec file, following the pattern in
-`milestone-01-skeleton.md` through `milestone-07-polish.md`.
+`milestone-01-skeleton.md` through `milestone-07-polish.md`. Changes made after the build order
+completed (not called for by the original spec, e.g. `-h`/`--help`) get their own
+`docs/specs/addendum-0N-*.md` instead — see `docs/specs/README.md`.
 
 `Everything64.dll` (`Goto/Search/Native/Everything64.dll`) is redistributed under the voidtools SDK's
 MIT-style license — see `docs/third-party/Everything-SDK-LICENSE.txt`. It's embedded as a resource,
@@ -95,7 +97,8 @@ by `| Invoke-Expression`, a different contract entirely. These are mutually excl
 ```
 Goto/Program.cs              entry point, exit-code dispatch, --init/--install handlers, picker dispatch
 Goto/Cli/ArgParser.cs         argv -> ParsedArgs (terms, --, --init, --install, --list, --pick, --no-ui,
-                              -e/--explore, -c/--code, --history)
+                              -e/--explore, -c/--code, --history, -h/--help)
+Goto/Cli/HelpText.cs          -h/--help full text (stdout, exit 0) + the terse bare-usage-error line
 Goto/Core/ExitCode.cs         exit code constants
 Goto/Core/PathShortcut.cs     single-term existing-path check (., .., ~, C:\x, relative dirs)
 Goto/Core/GotoQuery.cs        term splitting (/ and \ within an arg) + leaf/qualifiers/decision key
