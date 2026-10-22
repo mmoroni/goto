@@ -63,7 +63,7 @@ public class ResolverTests
     }
 
     [Fact]
-    public void Resolve_MultipleVerifiedMatches_ReturnsTooManyWithCappedCandidates()
+    public void Resolve_CountAboveMaxCandidates_ReturnsTooManyCappedAt20()
     {
         using var home = new TempGotoHome();
         using var tree = new TempTree();
@@ -72,10 +72,107 @@ public class ResolverTests
 
         var fake = new FakeFolderSearcher([first, second]);
 
-        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake, new Config { Exclude = [] });
+        // MaxCandidates = 1 forces the 2-match case over the TooMany threshold.
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake, new Config { Exclude = [], MaxCandidates = 1 });
 
         Assert.Equal(ResolveKind.TooMany, result.Kind);
         Assert.NotNull(result.Candidates);
         Assert.Equal(2, result.Candidates!.Count);
+    }
+
+    [Fact]
+    public void Resolve_CountWithinMaxCandidates_ReturnsNeedsDecisionWithKeyAndAllCandidates()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string first = tree.CreateDir("documents");
+        string second = tree.CreateDir(@"other\documents");
+
+        var fake = new FakeFolderSearcher([first, second]);
+
+        var result = Resolver.Resolve(ArgParser.Parse(["documents"]), fake, new Config { Exclude = [], MaxCandidates = 15 });
+
+        Assert.Equal(ResolveKind.NeedsDecision, result.Kind);
+        Assert.Equal("documents", result.Key);
+        Assert.Equal(2, result.Candidates!.Count);
+    }
+
+    [Fact]
+    public void Resolve_List_SkipsDecisionCache_ReturnsFullSet_RecordsNothing()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string decided = tree.CreateDir("decided-elsewhere");
+        DecisionStore.Upsert("documents", decided);
+
+        string fresh = tree.CreateDir("documents");
+        var fake = new FakeFolderSearcher([fresh]);
+
+        var parsed = ArgParser.Parse(["--list", "documents"]);
+        var result = Resolver.Resolve(parsed, fake, new Config { Exclude = [] });
+
+        Assert.Equal(ResolveKind.Listed, result.Kind);
+        Assert.Single(result.Candidates!);
+        Assert.Equal(fresh, result.Candidates![0], ignoreCase: true);
+
+        // The pre-existing decision must be untouched -- --list never writes.
+        Assert.True(DecisionStore.TryGet("documents", out string stillDecided));
+        Assert.Equal(decided, stillDecided, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_Pick_SingleMatch_AutoResolvesWithoutPicker()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string other = tree.CreateDir("decided-elsewhere");
+        DecisionStore.Upsert("documents", other); // stale/irrelevant decision -- --pick ignores it
+
+        string fresh = tree.CreateDir("documents");
+        var fake = new FakeFolderSearcher([fresh]);
+
+        var parsed = ArgParser.Parse(["--pick", "documents"]);
+        var result = Resolver.Resolve(parsed, fake, new Config { Exclude = [] });
+
+        Assert.Equal(ResolveKind.Success, result.Kind);
+        Assert.Equal(fresh, result.Path, ignoreCase: true);
+
+        Assert.True(DecisionStore.TryGet("documents", out string updated));
+        Assert.Equal(fresh, updated, ignoreCase: true);
+    }
+
+    [Fact]
+    public void Resolve_Pick_MultipleMatches_ReturnsNeedsDecisionBypassingMaxCandidates()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        var candidates = Enumerable.Range(0, 5)
+            .Select(i => tree.CreateDir($"folder{i}\\documents"))
+            .ToArray();
+
+        var fake = new FakeFolderSearcher(candidates);
+
+        var parsed = ArgParser.Parse(["--pick", "documents"]);
+        var result = Resolver.Resolve(parsed, fake, new Config { Exclude = [], MaxCandidates = 1 });
+
+        Assert.Equal(ResolveKind.NeedsDecision, result.Kind);
+        Assert.Equal(5, result.Candidates!.Count);
+        Assert.Equal("documents", result.Key);
+    }
+
+    [Fact]
+    public void RecordChoice_UpsertsDecisionAndIncrementsVisit()
+    {
+        using var home = new TempGotoHome();
+        using var tree = new TempTree();
+        string target = tree.CreateDir("chosen");
+
+        Resolver.RecordChoice("some key", target);
+
+        Assert.True(DecisionStore.TryGet("some key", out string decided));
+        Assert.Equal(target, decided, ignoreCase: true);
+
+        string visitsContent = File.ReadAllText(DataPaths.VisitsFile);
+        Assert.Contains(target, visitsContent, StringComparison.OrdinalIgnoreCase);
     }
 }

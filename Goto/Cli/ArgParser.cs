@@ -5,6 +5,9 @@ internal sealed class ParsedArgs
     public List<string> Positionals { get; } = new();
     public string? InitShell { get; set; }
     public bool Install { get; set; }
+    public bool List { get; set; }
+    public bool Pick { get; set; }
+    public bool NoUi { get; set; }
 }
 
 internal sealed class ArgParseException : Exception
@@ -43,11 +46,32 @@ internal static class ArgParser
                 continue;
             }
 
+            if (!endOfOptions && (a == "-l" || a == "--list"))
+            {
+                result.List = true;
+                continue;
+            }
+
+            if (!endOfOptions && (a == "-p" || a == "--pick"))
+            {
+                result.Pick = true;
+                continue;
+            }
+
+            if (!endOfOptions && a == "--no-ui")
+            {
+                result.NoUi = true;
+                continue;
+            }
+
             if (!endOfOptions && a.Length > 1 && a[0] == '-')
                 throw new ArgParseException($"gt: unknown option '{a}'");
 
             result.Positionals.Add(a);
         }
+
+        if (result.List && result.Pick)
+            throw new ArgParseException("gt: --list and --pick are mutually exclusive");
 
         return result;
     }

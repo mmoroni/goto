@@ -10,6 +10,7 @@ internal sealed class Config
     public IReadOnlyList<string> Exclude { get; internal init; } = DefaultExclude;
     public IReadOnlyList<string> WalkRoots { get; internal init; } = [];
     public int WalkTimeoutMs { get; internal init; } = 3000;
+    public int MaxCandidates { get; internal init; } = 15;
 
     public static Config Load()
     {
@@ -20,6 +21,7 @@ internal sealed class Config
         var exclude = new List<string>();
         var walkRoots = new List<string>();
         int timeoutMs = 3000;
+        int maxCandidates = 15;
 
         foreach (string rawLine in File.ReadLines(path))
         {
@@ -46,8 +48,12 @@ internal sealed class Config
                     if (int.TryParse(value, out int ms) && ms > 0)
                         timeoutMs = ms;
                     break;
+                case "max_candidates":
+                    if (int.TryParse(value, out int mc) && mc > 0)
+                        maxCandidates = mc;
+                    break;
                 // Unknown/not-yet-implemented keys (backend, everything_path,
-                // max_candidates, dominance_margin, ...) intentionally ignored.
+                // dominance_margin, ...) intentionally ignored.
             }
         }
 
@@ -56,6 +62,7 @@ internal sealed class Config
             Exclude = exclude.Count > 0 ? exclude : DefaultExclude,
             WalkRoots = walkRoots,
             WalkTimeoutMs = timeoutMs,
+            MaxCandidates = maxCandidates,
         };
     }
 

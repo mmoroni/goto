@@ -8,10 +8,12 @@ internal enum ResolveKind
 {
     Success,
     NoMatch,
+    NeedsDecision,
     TooMany,
+    Listed,
 }
 
-internal sealed record ResolveResult(ResolveKind Kind, string? Path, IReadOnlyList<string>? Candidates = null);
+internal sealed record ResolveResult(ResolveKind Kind, string? Path, IReadOnlyList<string>? Candidates = null, string? Key = null);
 
 internal static class Resolver
 {
@@ -21,6 +23,7 @@ internal static class Resolver
     {
         // Step 0 (spec section 7): single-term existing-path shortcut. Sees the
         // RAW, unsplit token -- "C:\Windows" must not be split before this check.
+        // Fires even under --list/--pick: a literal existing path has nothing to list or pick.
         if (args.Positionals.Count == 1 &&
             PathShortcut.TryResolve(args.Positionals[0], out string shortcutPath))
         {
@@ -33,8 +36,9 @@ internal static class Resolver
         GotoQuery query = GotoQuery.FromPositionals(args.Positionals);
         Config config = configOverride ?? Config.Load();
 
-        // Step 2: DECISION lookup + stale cleanup. (Step 1 ALIAS is deferred to Milestone 6.)
-        if (DecisionStore.TryGet(query.Key, out string decidedPath))
+        // Step 2: DECISION lookup + stale cleanup. Skipped entirely for --list/--pick, which both
+        // bypass the cache by design. (Step 1 ALIAS is deferred to Milestone 6.)
+        if (!args.List && !args.Pick && DecisionStore.TryGet(query.Key, out string decidedPath))
         {
             if (Directory.Exists(decidedPath))
             {
@@ -45,7 +49,8 @@ internal static class Resolver
             DecisionStore.Remove(query.Key);
         }
 
-        // Step 3: TIERS T1-T3, stop at first tier with >=1 verified match.
+        // Step 3: TIERS T1-T3, stop at first tier with >=1 verified match. Applies to
+        // --list/--pick too: --list shows what a plain `goto <term>` would currently consider.
         IFolderSearcher searcher = searcherOverride ?? new WalkSearcher(config);
         using var cts = new CancellationTokenSource(config.WalkTimeoutMs);
 
@@ -70,18 +75,57 @@ internal static class Resolver
         if (verified.Length == 0)
             return new ResolveResult(ResolveKind.NoMatch, null);
 
-        // Step 5 (M2-simplified: no ranking/picker yet -- see milestone-02 doc for rationale).
-        if (verified.Length > 1)
+        // --list: full candidate set, stable sort, no navigation, no recording.
+        if (args.List)
         {
-            string[] capped = verified.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Take(20).ToArray();
-            return new ResolveResult(ResolveKind.TooMany, null, capped);
+            string[] all = verified.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
+            return new ResolveResult(ResolveKind.Listed, null, all);
         }
 
-        string chosen = verified[0];
+        // --pick: skip the decision cache (already done above) and let the caller override it.
+        // A single unambiguous candidate auto-resolves rather than forcing a picker over one row
+        // (see milestone-03 doc for why: it keeps `--pick` usable under --no-ui/redirected input).
+        if (args.Pick)
+        {
+            if (verified.Length == 1)
+            {
+                string onlyMatch = verified[0];
+                DecisionStore.Upsert(query.Key, onlyMatch);
+                VisitStore.Increment(onlyMatch);
+                return new ResolveResult(ResolveKind.Success, onlyMatch);
+            }
 
-        // Step 6: upsert decision, increment visit.
-        DecisionStore.Upsert(query.Key, chosen);
-        VisitStore.Increment(chosen);
-        return new ResolveResult(ResolveKind.Success, chosen);
+            string[] all = verified.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
+            return new ResolveResult(ResolveKind.NeedsDecision, null, all, query.Key);
+        }
+
+        // Step 5 (M3): 1 match -> go. No dominant-winner branch -- that needs real ranking
+        // scores (Milestone 5); this milestone goes straight from "1 match" to the count check.
+        if (verified.Length == 1)
+        {
+            string chosen = verified[0];
+            DecisionStore.Upsert(query.Key, chosen);
+            VisitStore.Increment(chosen);
+            return new ResolveResult(ResolveKind.Success, chosen);
+        }
+
+        if (verified.Length <= config.MaxCandidates)
+        {
+            string[] all = verified.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
+            return new ResolveResult(ResolveKind.NeedsDecision, null, all, query.Key);
+        }
+
+        string[] capped = verified.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Take(20).ToArray();
+        return new ResolveResult(ResolveKind.TooMany, null, capped);
+    }
+
+    /// <summary>
+    /// Records a choice made outside Resolve's own call frame (an interactive picker selection).
+    /// Reuses exactly the two calls step 6 already makes for an auto-resolved match.
+    /// </summary>
+    public static void RecordChoice(string key, string path)
+    {
+        DecisionStore.Upsert(key, path);
+        VisitStore.Increment(path);
     }
 }

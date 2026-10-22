@@ -12,12 +12,12 @@ parent shell's working directory, hence the split.
 The full design spec (architecture, on-disk file formats, ranking algorithm, Everything-search
 integration, picker UI, full build order across 7 milestones) lives in `docs/specs/00-design-spec.md`,
 with one `docs/specs/milestone-0N-*.md` per build-order milestone — see `docs/specs/README.md` for
-the index and each milestone's status. **This repo currently implements Milestones 1-2** (skeleton,
-and the walker + resolver + decisions store). Do not add the Everything SDK integration, the
-interactive picker, ranking/frecency, or alias/completion commands until asked — those belong to
-later milestones and would be half-finished implementations right now. When a milestone ships,
-update its status and add implementation notes in its spec file, following the pattern in
-`milestone-01-skeleton.md`/`milestone-02-walker-resolver-decisions.md`.
+the index and each milestone's status. **This repo currently implements Milestones 1-3** (skeleton;
+walker + resolver + decisions store; picker + "too many" handling). Do not add the Everything SDK
+integration, ranking/frecency, or alias/completion commands until asked — those belong to later
+milestones and would be half-finished implementations right now. When a milestone ships, update its
+status and add implementation notes in its spec file, following the pattern in
+`milestone-01-skeleton.md`/`milestone-02-walker-resolver-decisions.md`/`milestone-03-picker-and-too-many.md`.
 
 ## Build
 
@@ -81,15 +81,15 @@ by `| Invoke-Expression`, a different contract entirely. These are mutually excl
 |---|---|
 | 0 | Success, path on stdout |
 | 1 | No match |
-| 2 | Too many matches (M2: always this; a real picker/cancel path is Milestone 3) |
+| 2 | Too many matches, ambiguous (non-interactive dump), or picker cancelled (Esc/Ctrl+C) |
 | 3 | Backend or config error |
 | 4 | Usage error |
 
 ## Layout
 
 ```
-Goto/Program.cs              entry point, exit-code dispatch, --init/--install handlers
-Goto/Cli/ArgParser.cs         argv -> ParsedArgs (terms, --, --init, --install)
+Goto/Program.cs              entry point, exit-code dispatch, --init/--install handlers, picker dispatch
+Goto/Cli/ArgParser.cs         argv -> ParsedArgs (terms, --, --init, --install, --list, --pick, --no-ui)
 Goto/Core/ExitCode.cs         exit code constants
 Goto/Core/PathShortcut.cs     single-term existing-path check (., .., ~, C:\x, relative dirs)
 Goto/Core/GotoQuery.cs        term splitting (/ and \ within an arg) + leaf/qualifiers/decision key
@@ -99,16 +99,33 @@ Goto/Search/IFolderSearcher.cs  backend interface (shared by WalkSearcher now, E
 Goto/Search/WalkSearcher.cs   fallback filesystem walker (the only backend until M4)
 Goto/Store/DataPaths.cs       GOTO_HOME / portable-mode / %LOCALAPPDATA% resolution
 Goto/Store/AtomicFile.cs      named-mutex + tmp-then-rename write primitive
-Goto/Store/Config.cs          config.txt parser (exclude / walk_roots / walk_timeout_ms only)
+Goto/Store/Config.cs          config.txt parser (exclude / walk_roots / walk_timeout_ms / max_candidates)
 Goto/Store/DecisionStore.cs   decisions.tsv read/write + stale-entry cleanup
 Goto/Store/VisitStore.cs      visits.tsv increment-only (no reader -- that's Milestone 5)
 Goto/Shell/PowerShellInit.cs  --init powershell script text (verbatim — don't reword/retune)
 Goto/Shell/RawOutput.cs       byte-exact stdout writer (the only stdout writer in the program)
+Goto/Ui/Vt.cs                 VT escape processing scope for stderr (P/Invoke console mode)
+Goto/Ui/PickerState.cs        pure, console-free picker state machine (unit-testable)
+Goto/Ui/Picker.cs             the only code that touches Console.ReadKey/real rendering
 ```
 
 `goto.slnx` (note: `.slnx`, not `.sln` — .NET 10's `dotnet new sln` default) references both
 `Goto/Goto.csproj` and `Goto.Tests/Goto.Tests.csproj`. `build.ps1` still publishes `Goto/Goto.csproj`
 directly, not the solution (publishing the test project via AOT would be meaningless).
+
+## Key design decisions (Milestone 3)
+
+- **`--pick` auto-resolves a single match instead of forcing a one-row picker**, in any context
+  (interactive or not) — keeps `--pick` usable under `--no-ui`/redirected input. Multiple matches
+  still force the picker (or a non-interactive dump).
+- **`Console.TreatControlCAsInput = true` is required around the picker's read loop** (restored
+  after) or `Console.ReadKey` never sees Ctrl+C — the runtime's default handler intercepts it first.
+- **Scripted verification against this exe must capture stdout via `$out = & $exe args`** (with
+  `[Console]::OutputEncoding` forced to UTF-8 first), **never** `1> file` redirection — the latter
+  round-trips a native process's stdout through PowerShell's own string pipeline, corrupting bytes
+  (re-encoding, adding CRLF). This is the same gotcha the real PowerShell wrapper already works
+  around; don't reintroduce it in test/verification scripts.
+- Full list of M3-specific decisions is in `docs/specs/milestone-03-picker-and-too-many.md`.
 
 ## Key design decisions (Milestone 2)
 

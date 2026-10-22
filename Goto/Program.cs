@@ -1,6 +1,7 @@
 using Goto.Cli;
 using Goto.Core;
 using Goto.Shell;
+using Goto.Ui;
 
 // Defensive: avoid legacy console-codepage mangling of stderr messages
 // containing non-ASCII paths. Does NOT affect the raw stdout path writer,
@@ -59,10 +60,39 @@ static int Run(string[] args)
                 Console.Error.WriteLine($"  {candidate}");
             return ExitCode.AmbiguousOrCancelled;
 
+        case ResolveKind.Listed:
+            Console.Error.WriteLine($"gt: {result.Candidates!.Count} match(es):");
+            foreach (string candidate in result.Candidates)
+                Console.Error.WriteLine($"  {candidate}");
+            return ExitCode.Success;
+
+        case ResolveKind.NeedsDecision:
+            return DispatchNeedsDecision(parsed, result);
+
         default:
             Console.Error.WriteLine("gt: internal error");
             return ExitCode.BackendOrConfigError;
     }
+}
+
+static int DispatchNeedsDecision(ParsedArgs parsed, ResolveResult result)
+{
+    bool nonInteractive = Console.IsInputRedirected || parsed.NoUi;
+    if (nonInteractive)
+    {
+        Console.Error.WriteLine($"gt: {result.Candidates!.Count} possible matches, pick one (non-interactive):");
+        foreach (string candidate in result.Candidates)
+            Console.Error.WriteLine($"  {candidate}");
+        return ExitCode.AmbiguousOrCancelled;
+    }
+
+    string? chosen = Picker.Run(result.Candidates!);
+    if (chosen is null)
+        return ExitCode.AmbiguousOrCancelled; // Esc/Ctrl+C: silent, no stdout, no recording
+
+    Resolver.RecordChoice(result.Key!, chosen);
+    RawOutput.WriteStdout(chosen);
+    return ExitCode.Success;
 }
 
 static int RunInit(string shell)
