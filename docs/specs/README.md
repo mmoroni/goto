@@ -32,3 +32,4 @@ separately from the milestones since they're not part of spec §12's build order
 | 2 | [addendum-02-stdout-discipline-bugfixes.md](./addendum-02-stdout-discipline-bugfixes.md) | Implemented |
 | 3 | [addendum-03-root-readme.md](./addendum-03-root-readme.md) | Implemented |
 | 4 | [addendum-04-remove-walker-fallback.md](./addendum-04-remove-walker-fallback.md) | Implemented |
+| 5 | [addendum-05-fix-ctrl-g-picker-hang.md](./addendum-05-fix-ctrl-g-picker-hang.md) | Implemented |

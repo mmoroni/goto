@@ -164,6 +164,14 @@ directly, not the solution (publishing the test project via AOT would be meaning
 - **Any new meta-command reachable via the `gt`/`goto` wrapper must print to `Console.Error`, never
   `Console.WriteLine`** — see the golden rule section above and
   `docs/specs/addendum-02-stdout-discipline-bugfixes.md`.
+- **Never run a child process that reads raw console keys (anything using `Picker.Run`) from inside
+  a `Set-PSReadLineKeyHandler` script block.** The handler executes inside PSReadLine's own
+  input-reading loop; a child's `Console.ReadKey` calls race PSReadLine for the same input stream,
+  and in practice nothing but Ctrl+C gets through (PSReadLine keeps a dedicated Ctrl+C watcher to
+  abort stuck handlers). The fix — and the pattern any future interactive-picker key binding must
+  follow — is `RevertLine()` + `Insert('the actual command')` + `AcceptLine()`, so the real command
+  runs afterward as an ordinary top-level command, outside the handler and outside PSReadLine's
+  input loop. See `docs/specs/addendum-05-fix-ctrl-g-picker-hang.md`.
 - Full list of addenda (what each one changed and why) is indexed in `docs/specs/README.md`.
 
 ## Key design decisions (Milestone 7)

@@ -51,21 +51,24 @@ internal static class PowerShellInit
     // below. Wrapped in try/catch: PSReadLine isn't guaranteed loaded in every host (ISE,
     // non-interactive/scripted profile loads, or a user who removed the module), and a missing
     // cmdlet here must never break profile load.
+    //
+    // The handler does NOT run the picker itself. A custom key handler's script block executes
+    // *inside* PSReadLine's own input-reading loop; launching a child process that reads raw
+    // console keys (Picker.Run's Console.ReadKey) from there races PSReadLine for the same input
+    // stream -- confirmed empirically: nothing but Ctrl+C (PSReadLine's handler-abort watcher) got
+    // through, exactly as if the picker weren't receiving any other keystroke at all. The standard
+    // fix (the same pattern fzf/zoxide-style PSReadLine integrations use): insert the real command
+    // as pending input and submit it, so the picker runs as an ordinary top-level command --
+    // completely outside the handler -- where Console.ReadKey behaves normally. Reuses the `goto`
+    // function verbatim (its own $out/$code/Set-Location logic already does exactly what's needed),
+    // so no duplicate capture logic lives here.
     public const string HistoryHotkeyBlock = """
 
         try {
             Set-PSReadLineKeyHandler -Chord 'Ctrl+g' -ScriptBlock {
                 [Microsoft.PowerShell.PSConsoleReadLine]::RevertLine()
-                $prevEnc = [Console]::OutputEncoding
-                [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-                try {
-                    $out  = & $global:GOTO_EXE --history
-                    $code = $LASTEXITCODE
-                } finally { [Console]::OutputEncoding = $prevEnc }
-                if ($code -eq 0 -and $out) {
-                    Set-Location -LiteralPath (@($out)[0])
-                }
-                [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
+                [Microsoft.PowerShell.PSConsoleReadLine]::Insert('gt --history')
+                [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
             }
         } catch {
             # PSReadLine not loaded/available in this host -- no-op rather than breaking the profile.
